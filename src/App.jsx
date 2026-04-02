@@ -55,6 +55,11 @@ const Card = ({ children, className = "", onClick }) => <div onClick={onClick} c
 const Pill = ({ active, onClick, children }) => <button onClick={onClick} className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap ${active ? "bg-gray-900 text-white shadow-md scale-105" : "bg-white text-gray-500 hover:bg-gray-100 border border-gray-200"}`}>{children}</button>;
 const Sel = ({ value, onChange, children, className = "" }) => <select value={value} onChange={onChange} className={`bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300 appearance-none ${className}`}>{children}</select>;
 const Inp = ({ className = "", ...p }) => <input {...p} className={`bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300 ${className}`} />;
+const NumInp = ({ value, onChange, className = "", ...p }) => {
+  const display = (value || value === 0) && value !== "" ? Number(value).toLocaleString("id-ID") : "";
+  const handle = (e) => { const raw = e.target.value.replace(/\D/g, ""); onChange(Number(raw) || 0); };
+  return <input {...p} type="text" inputMode="numeric" value={display} onChange={handle} className={`bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300 ${className}`} />;
+};
 const BtnDark = ({ children, className = "", ...p }) => <button {...p} className={`text-sm font-medium px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50 ${className}`}>{children}</button>;
 
 // ============ DEBT CALC ============
@@ -103,9 +108,9 @@ async function doExport(setup, itinerary, expenses) {
 
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([
     ["ITINERARY"], [],
-    ["Date", "Time", "Activity", "Location", "Category", "Est Cost", "Who", "Notes"],
+    ["Date", "Time", "Activity", "Location", "Who", "Notes"],
     ...(itinerary || []).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
-      .map(r => [r.date, r.time, r.activity, r.location, r.category, r.estCost || 0, r.assignedTo?.join(", "), r.notes])
+      .map(r => [r.date, r.time, r.activity, r.location, r.assignedTo?.join(", "), r.notes])
   ]), "Itinerary");
 
   const er = [["EXPENSES"], [], ["Date", "Desc", "Category", "Amount", "Paid By", ...names.map(n => n + " share")]];
@@ -342,18 +347,35 @@ function TripView({ code, onBack }) {
 function Dashboard({ setup, expenses = [], itinerary = [] }) {
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const dates = getDates(setup?.startDate, setup?.endDate);
-  const totalBudget = (setup?.members || []).reduce((s, m) => s + (m.budget || 0), 0);
-  const totalSpent = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-  const itinBudget = itinerary.reduce((s, r) => s + (r.estCost || 0), 0);
+  const [filter, setFilter] = useState("__all__");
+
+  // Filter expenses by person (only those where the person is in splitAmong)
+  const filtered = filter === "__all__" ? expenses : expenses.filter(e => e.splitAmong?.includes(filter));
+
+  const totalBudget = filter === "__all__"
+    ? (setup?.members || []).reduce((s, m) => s + (m.budget || 0), 0)
+    : ((setup?.members || []).find(m => m.name === filter)?.budget || 0);
+
+  const totalSpent = filter === "__all__"
+    ? filtered.reduce((s, e) => s + (e.amount || 0), 0)
+    : filtered.reduce((s, e) => s + ((e.amount || 0) / (e.splitAmong?.length || 1)), 0);
+
   const remaining = totalBudget - totalSpent;
   const pct = totalBudget > 0 ? Math.min((totalSpent / totalBudget) * 100, 100) : 0;
 
   const byCat = {}; CATS.forEach(c => byCat[c] = 0);
-  expenses.forEach(e => byCat[e.category] = (byCat[e.category] || 0) + (e.amount || 0));
+  filtered.forEach(e => {
+    const amt = filter === "__all__" ? (e.amount || 0) : (e.amount || 0) / (e.splitAmong?.length || 1);
+    byCat[e.category] = (byCat[e.category] || 0) + amt;
+  });
   const maxCat = Math.max(...Object.values(byCat), 1);
 
   const byDate = {}; dates.forEach(d => byDate[isoD(d)] = 0);
-  expenses.forEach(e => { if (e.date) byDate[e.date] = (byDate[e.date] || 0) + (e.amount || 0); });
+  filtered.forEach(e => {
+    if (!e.date) return;
+    const amt = filter === "__all__" ? (e.amount || 0) : (e.amount || 0) / (e.splitAmong?.length || 1);
+    byDate[e.date] = (byDate[e.date] || 0) + amt;
+  });
   const maxDay = Math.max(...Object.values(byDate), 1);
 
   const perMember = names.map(n => {
@@ -366,6 +388,14 @@ function Dashboard({ setup, expenses = [], itinerary = [] }) {
 
   return (
     <div className="space-y-5">
+      <Card className="p-4"><div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-gray-400 font-medium">Filter:</span>
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={() => setFilter("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${filter === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>All</button>
+          {names.map(n => <button key={n} onClick={() => setFilter(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${filter === n ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>{n}</button>)}
+        </div>
+      </div></Card>
+
       <Card className="p-6 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white border-none relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -translate-y-1/2 translate-x-1/2" />
         <div className="absolute bottom-0 left-0 w-40 h-40 bg-white opacity-5 rounded-full translate-y-1/2 -translate-x-1/2" />
@@ -385,7 +415,7 @@ function Dashboard({ setup, expenses = [], itinerary = [] }) {
       </Card>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[{ e: "🧾", l: "Transactions", v: expenses.length }, { e: "📍", l: "Activities", v: itinerary.length }, { e: "💰", l: "Avg/Day", v: fmt(dates.length > 0 ? Math.round(totalSpent / dates.length) : 0) }, { e: "🗓️", l: "Est. Itin", v: fmt(itinBudget) }].map(s => (
+        {[{ e: "🧾", l: "Transactions", v: expenses.length }, { e: "📍", l: "Activities", v: itinerary.length }, { e: "💰", l: "Avg/Day", v: fmt(dates.length > 0 ? Math.round(totalSpent / dates.length) : 0) }, { e: "👥", l: "Travelers", v: names.length }].map(s => (
           <Card key={s.l} className="p-4"><div className="flex items-center gap-2"><span className="text-lg">{s.e}</span><span className="text-xs text-gray-400 font-medium uppercase tracking-wide">{s.l}</span></div><div className="text-xl font-bold text-gray-800 mt-1">{s.v}</div></Card>
         ))}
       </div>
@@ -410,7 +440,7 @@ function Dashboard({ setup, expenses = [], itinerary = [] }) {
 // ============ SETUP ============
 function SetupTab({ setup, setSetup }) {
   const u = (k, v) => setSetup(p => ({ ...p, [k]: v }));
-  const uM = (i, k, v) => setSetup(p => { const m = [...(p.members || [])]; m[i] = { ...m[i], [k]: k === "budget" ? Number(v) || 0 : v }; return { ...p, members: m }; });
+  const uM = (i, k, v) => setSetup(p => { const m = [...(p.members || [])]; m[i] = { ...m[i], [k]: v }; return { ...p, members: m }; });
   const addM = () => setSetup(p => ({ ...p, members: [...(p.members || []), { id: genId(), name: "", budget: 2000000 }] }));
   const rmM = (i) => setSetup(p => ({ ...p, members: (p.members || []).filter((_, idx) => idx !== i) }));
   const applyB = (v) => setSetup(p => ({ ...p, members: (p.members || []).map(m => ({ ...m, budget: Number(v) || 0 })) }));
@@ -427,12 +457,12 @@ function SetupTab({ setup, setSetup }) {
       </Card>
       <Card className="p-5 space-y-4">
         <div className="flex justify-between items-center"><h3 className="text-sm font-semibold text-gray-700">👥 Members ({(setup?.members || []).length})</h3><BtnDark onClick={addM}>+ Add</BtnDark></div>
-        <div className="flex gap-2 items-center"><Inp type="number" placeholder="Set all budgets" className="flex-1" onChange={e => applyB(e.target.value)} /><span className="text-xs text-gray-400 shrink-0">Apply all</span></div>
+        <div className="flex gap-2 items-center"><NumInp value="" placeholder="Set all budgets" className="flex-1" onChange={v => applyB(v)} /><span className="text-xs text-gray-400 shrink-0">Apply all</span></div>
         <div className="space-y-2">{(setup?.members || []).map((m, i) => (
           <div key={m.id || i} className="flex gap-2 items-center bg-gray-50 p-2 rounded-xl">
             <div className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">{(m.name || "?")[0].toUpperCase()}</div>
             <Inp value={m.name || ""} onChange={e => uM(i, "name", e.target.value)} placeholder="Name" className="flex-1" />
-            <Inp type="number" value={m.budget || ""} onChange={e => uM(i, "budget", e.target.value)} placeholder="Budget" className="w-32" />
+            <NumInp value={m.budget} onChange={v => uM(i, "budget", v)} placeholder="Budget" className="w-32" />
             {(setup?.members || []).length > 1 && <button onClick={() => rmM(i)} className="text-gray-300 hover:text-red-500 text-lg">×</button>}
           </div>
         ))}</div>
@@ -446,13 +476,11 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const dates = getDates(setup?.startDate, setup?.endDate);
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const [fp, setFp] = useState("__all__");
-  const add = (d) => setItems(p => [...(p || []), { id: genId(), date: isoD(d), time: "09:00", activity: "", location: "", assignedTo: [...names], notes: "", estCost: 0, category: "Activities" }]);
+  const add = (d) => setItems(p => [...(p || []), { id: genId(), date: isoD(d), time: "09:00", activity: "", location: "", assignedTo: [...names], notes: "" }]);
   const rm = (id) => setItems(p => (p || []).filter(r => r.id !== id));
-  const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: k === "estCost" ? Number(v) || 0 : v } : r));
+  const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: v } : r));
   const togA = (id, n) => setItems(p => (p || []).map(r => r.id !== id ? r : { ...r, assignedTo: r.assignedTo?.includes(n) ? r.assignedTo.filter(x => x !== n) : [...(r.assignedTo || []), n] }));
   const fil = (rows) => fp === "__all__" ? rows : rows.filter(r => r.assignedTo?.includes(fp));
-  const totalC = (items || []).reduce((s, r) => s + (r.estCost || 0), 0);
-
   return (
     <div className="space-y-4">
       <Card className="p-4"><div className="flex items-center gap-3 flex-wrap">
@@ -461,16 +489,14 @@ function ItineraryTab({ setup, items = [], setItems }) {
           <button onClick={() => setFp("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${fp === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
           {names.map(n => <button key={n} onClick={() => setFp(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${fp === n ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>{n}</button>)}
         </div>
-        <div className="ml-auto text-xs text-gray-400">Est: <span className="font-bold text-gray-700">{fmt(totalC)}</span></div>
       </div></Card>
 
       {dates.map(d => {
         const ds = isoD(d), all = (items || []).filter(r => r.date === ds).sort((a, b) => (a.time || "").localeCompare(b.time || "")), rows = fil(all);
-        const dayB = all.reduce((s, r) => s + (r.estCost || 0), 0);
         return (
           <Card key={ds} className="overflow-hidden">
             <div className="flex justify-between items-center px-5 py-3 bg-gray-50 border-b">
-              <div className="flex items-center gap-3"><span className="font-semibold text-sm text-gray-800">{fmtD(d)}</span><span className="text-xs text-gray-400">{rows.length} act.</span>{dayB > 0 && <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{fmt(dayB)}</span>}</div>
+              <div className="flex items-center gap-3"><span className="font-semibold text-sm text-gray-800">{fmtD(d)}</span><span className="text-xs text-gray-400">{rows.length} act.</span></div>
               <button onClick={() => add(d)} className="text-sm font-medium text-gray-600 hover:text-gray-900 bg-white border px-3 py-1 rounded-full">+</button>
             </div>
             {rows.length === 0 && <p className="p-5 text-sm text-gray-300 italic text-center">{fp !== "__all__" ? `No activities for ${fp}` : "Tap + to add"}</p>}
@@ -482,11 +508,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
                   <Inp value={r.location || ""} onChange={e => upd(r.id, "location", e.target.value)} placeholder="📍 Location" className="flex-1 min-w-[100px]" />
                   <button onClick={() => rm(r.id)} className="text-gray-300 hover:text-red-400 text-lg">×</button>
                 </div>
-                <div className="flex gap-2 items-center flex-wrap">
-                  <Sel value={r.category || "Other"} onChange={e => upd(r.id, "category", e.target.value)} className="w-32">{CATS.map(c => <option key={c} value={c}>{CAT_EMOJI[c]} {c}</option>)}</Sel>
-                  <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-xl px-2"><span className="text-xs text-gray-400">Rp</span><input type="number" value={r.estCost || ""} onChange={e => upd(r.id, "estCost", e.target.value)} placeholder="0" className="bg-transparent py-2 text-sm w-24 focus:outline-none" /></div>
-                  <div className="flex gap-1.5 flex-wrap items-center ml-1"><span className="text-xs text-gray-400">Who:</span>{names.map(n => <button key={n} onClick={() => togA(r.id, n)} className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all ${r.assignedTo?.includes(n) ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-400"}`}>{n}</button>)}</div>
-                </div>
+                <div className="flex gap-1.5 flex-wrap items-center"><span className="text-xs text-gray-400">Who:</span>{names.map(n => <button key={n} onClick={() => togA(r.id, n)} className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all ${r.assignedTo?.includes(n) ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-400"}`}>{n}</button>)}</div>
                 <Inp value={r.notes || ""} onChange={e => upd(r.id, "notes", e.target.value)} placeholder="Notes..." className="w-full text-xs" />
               </div>
             ))}</div>
@@ -503,7 +525,7 @@ function ExpensesTab({ setup, expenses = [], setExpenses }) {
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const add = () => setExpenses(p => [...(p || []), { id: genId(), date: dates[0] ? isoD(dates[0]) : "", description: "", category: "Food", amount: 0, paidBy: names[0] || "", splitAmong: [...names] }]);
   const rm = (id) => setExpenses(p => (p || []).filter(e => e.id !== id));
-  const upd = (id, k, v) => setExpenses(p => (p || []).map(e => e.id === id ? { ...e, [k]: k === "amount" ? Number(v) || 0 : v } : e));
+  const upd = (id, k, v) => setExpenses(p => (p || []).map(e => e.id === id ? { ...e, [k]: v } : e));
   const togS = (id, n) => setExpenses(p => (p || []).map(e => e.id !== id ? e : { ...e, splitAmong: e.splitAmong?.includes(n) ? e.splitAmong.filter(x => x !== n) : [...(e.splitAmong || []), n] }));
   const total = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
 
@@ -517,7 +539,7 @@ function ExpensesTab({ setup, expenses = [], setExpenses }) {
             <Sel value={ex.date || ""} onChange={e => upd(ex.id, "date", e.target.value)} className="w-36">{dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}</Sel>
             <Sel value={ex.category || "Food"} onChange={e => upd(ex.id, "category", e.target.value)} className="w-36">{CATS.map(c => <option key={c} value={c}>{CAT_EMOJI[c]} {c}</option>)}</Sel>
             <Inp value={ex.description || ""} onChange={e => upd(ex.id, "description", e.target.value)} placeholder="Description" className="flex-1 min-w-[120px]" />
-            <Inp type="number" value={ex.amount || ""} onChange={e => upd(ex.id, "amount", e.target.value)} placeholder="Amount" className="w-28 text-right font-semibold" />
+            <NumInp value={ex.amount} onChange={v => upd(ex.id, "amount", v)} placeholder="Amount" className="w-28 text-right font-semibold" />
             <button onClick={() => rm(ex.id)} className="text-gray-300 hover:text-red-400 text-lg">×</button>
           </div>
           <div className="flex gap-2 items-center flex-wrap">
