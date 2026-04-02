@@ -5,9 +5,9 @@ import { saveTrip, getTrip, listenTrip } from "./firebase";
 const genId = () => Math.random().toString(36).slice(2, 8);
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 const fmt = (n) => "Rp " + (n || 0).toLocaleString("id-ID");
-const CATS = ["Food", "Transport", "Accommodation", "Ticket", "Shopping", "Other"];
-const CAT_EMOJI = { Food: "🍜", Transport: "🚗", Accommodation: "🏨", Ticket: "🎫", Shopping: "🛍️", Other: "📦" };
-const CAT_COLORS = { Food: "#f97316", Transport: "#3b82f6", Accommodation: "#8b5cf6", Ticket: "#ec4899", Shopping: "#10b981", Other: "#6b7280" };
+const CATS = ["Food", "Transport – Local", "Transport – Intercity", "Accommodation", "Activities", "Souvenirs", "Visa / Admin", "Emergency"];
+const CAT_EMOJI = { Food: "🍜", "Transport – Local": "🚕", "Transport – Intercity": "✈️", Accommodation: "🏨", Activities: "🎡", Souvenirs: "🎁", "Visa / Admin": "🛂", Emergency: "🧯" };
+const CAT_COLORS = { Food: "#f97316", "Transport – Local": "#3b82f6", "Transport – Intercity": "#0ea5e9", Accommodation: "#8b5cf6", Activities: "#ec4899", Souvenirs: "#10b981", "Visa / Admin": "#eab308", Emergency: "#ef4444" };
 
 const getDates = (s, e) => {
   if (!s || !e) return [];
@@ -446,7 +446,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const dates = getDates(setup?.startDate, setup?.endDate);
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const [fp, setFp] = useState("__all__");
-  const add = (d) => setItems(p => [...(p || []), { id: genId(), date: isoD(d), time: "09:00", activity: "", location: "", assignedTo: [...names], notes: "", estCost: 0, category: "Other" }]);
+  const add = (d) => setItems(p => [...(p || []), { id: genId(), date: isoD(d), time: "09:00", activity: "", location: "", assignedTo: [...names], notes: "", estCost: 0, category: "Activities" }]);
   const rm = (id) => setItems(p => (p || []).filter(r => r.id !== id));
   const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: k === "estCost" ? Number(v) || 0 : v } : r));
   const togA = (id, n) => setItems(p => (p || []).map(r => r.id !== id ? r : { ...r, assignedTo: r.assignedTo?.includes(n) ? r.assignedTo.filter(x => x !== n) : [...(r.assignedTo || []), n] }));
