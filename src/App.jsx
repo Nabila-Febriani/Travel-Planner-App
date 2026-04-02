@@ -384,7 +384,8 @@ function Dashboard({ setup, expenses = [], itinerary = [] }) {
     expenses.forEach(e => { if (e.splitAmong?.includes(n) && e.splitAmong.length > 0) spent += (e.amount || 0) / e.splitAmong.length; });
     return { name: n, budget: m?.budget || 0, spent: Math.round(spent) };
   });
-  const { settlements } = calcDebts(names, expenses);
+  const { settlements: allSettlements } = calcDebts(names, expenses);
+  const settlements = filter === "__all__" ? allSettlements : allSettlements.filter(s => s.from === filter || s.to === filter);
 
   return (
     <div className="space-y-5">
@@ -414,18 +415,12 @@ function Dashboard({ setup, expenses = [], itinerary = [] }) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[{ e: "🧾", l: "Transactions", v: expenses.length }, { e: "📍", l: "Activities", v: itinerary.length }, { e: "💰", l: "Avg/Day", v: fmt(dates.length > 0 ? Math.round(totalSpent / dates.length) : 0) }, { e: "👥", l: "Travelers", v: names.length }].map(s => (
-          <Card key={s.l} className="p-4"><div className="flex items-center gap-2"><span className="text-lg">{s.e}</span><span className="text-xs text-gray-400 font-medium uppercase tracking-wide">{s.l}</span></div><div className="text-xl font-bold text-gray-800 mt-1">{s.v}</div></Card>
-        ))}
-      </div>
-
-      <Card className="p-5">
+      {filter === "__all__" && <Card className="p-5">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">👥 Budget per Person</h3>
         <div className="space-y-3">{perMember.map(m => { const p = m.budget > 0 ? Math.min(m.spent / m.budget * 100, 100) : 0; return (
           <div key={m.name}><div className="flex justify-between text-sm mb-1"><span className="font-medium">{m.name}</span><span className={`text-xs ${m.budget - m.spent < 0 ? "text-red-500 font-semibold" : "text-gray-400"}`}>{fmt(m.spent)} / {fmt(m.budget)}</span></div><div className="bg-gray-100 rounded-full h-2.5 overflow-hidden"><div className={`h-full rounded-full transition-all ${p > 90 ? "bg-red-400" : p > 70 ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: p + "%" }} /></div></div>
         ); })}</div>
-      </Card>
+      </Card>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card className="p-5"><h3 className="text-sm font-semibold text-gray-700 mb-4">📂 By Category</h3><div className="space-y-2.5">{CATS.map(c => (<div key={c} className="flex items-center gap-2.5"><span className="w-6 text-center">{CAT_EMOJI[c]}</span><span className="text-xs text-gray-500 w-24">{c}</span><div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden"><div className="h-full rounded-full" style={{ width: (byCat[c] / maxCat * 100) + "%", background: CAT_COLORS[c] }} /></div><span className="text-xs font-medium text-gray-600 w-24 text-right">{fmt(byCat[c])}</span></div>))}</div></Card>
