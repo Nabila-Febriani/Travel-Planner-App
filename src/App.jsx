@@ -505,8 +505,9 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const slotToMin = (slot) => (slot + 6) * 60; // slot 0 = 06:00
 
   // Drag handlers for creating events
+  const dragTimer = useRef(null);
   const handleMouseDown = (date, col, slot, e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.target.closest("[data-event]")) return;
     e.preventDefault();
     setDrag({ date, col, startSlot: slot, currentSlot: slot });
   };
@@ -564,7 +565,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
     const color = item.assignedTo?.length === 1 ? getColor(item.assignedTo[0]) : "#3b82f6";
     const compact = height < 36;
     return (
-      <div key={item.id} onClick={(e) => { e.stopPropagation(); setModal({ id: item.id, snapshot: item }); }}
+      <div key={item.id} data-event="true" onMouseDown={e => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setModal({ id: item.id, snapshot: item }); }}
         className="absolute left-1 right-1 rounded-lg px-2 py-1 cursor-pointer overflow-hidden border border-white/30 hover:brightness-110 transition-all z-20"
         style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}>
         {compact ? (
@@ -648,24 +649,27 @@ function ItineraryTab({ setup, items = [], setItems }) {
         </div>
       </Card>
 
-      <Card className="overflow-hidden">
-        {/* Sticky header row */}
-        <div className="flex border-b border-gray-200 bg-white sticky top-0 z-30">
-          <div className="shrink-0 w-14 border-r border-gray-200" />
-          {viewMode === "week" ? weekHeaders : dayHeaders}
-        </div>
-        {/* Scrollable grid body */}
-        <div className="overflow-auto max-h-[70vh]" ref={gridRef} style={{ userSelect: drag ? "none" : "auto" }}>
-          <div className="flex">
-            {renderTimeGutter()}
-            {viewMode === "week" ? dates.map(d => {
-              const ds = isoD(d);
-              const colItems = (weekFiltered || []).filter(r => r.date === ds);
-              return <div key={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
-            }) : names.map(n => {
-              const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
-              return <div key={n} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
-            })}
+      <Card className="overflow-hidden" style={{ position: "relative", zIndex: 0 }}>
+        {/* Scrollable grid with sticky header inside */}
+        <div className="overflow-auto" ref={gridRef} style={{ maxHeight: "calc(100vh - 280px)", userSelect: drag ? "none" : "auto" }}>
+          <div style={{ minWidth: viewMode === "week" ? dates.length * 120 + 56 : names.length * 120 + 56 }}>
+            {/* Sticky header row */}
+            <div className="flex border-b border-gray-200 bg-white sticky top-0 z-30">
+              <div className="shrink-0 w-14 border-r border-gray-200" />
+              {viewMode === "week" ? weekHeaders : dayHeaders}
+            </div>
+            {/* Grid body */}
+            <div className="flex">
+              {renderTimeGutter()}
+              {viewMode === "week" ? dates.map(d => {
+                const ds = isoD(d);
+                const colItems = (weekFiltered || []).filter(r => r.date === ds);
+                return <div key={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
+              }) : names.map(n => {
+                const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
+                return <div key={n} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
+              })}
+            </div>
           </div>
         </div>
       </Card>
