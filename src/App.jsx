@@ -287,13 +287,14 @@ function TripView({ code, onBack }) {
   const setExpenses = (fn) => upd("expenses", fn);
   const setPacking = (fn) => upd("packing", fn);
   const setPackChecks = (fn) => upd("packChecks", fn);
+  const setPaidDebts = (fn) => upd("paidDebts", fn);
 
   const copyCode = () => { navigator.clipboard?.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const copyLink = () => { navigator.clipboard?.writeText(window.location.origin + "?trip=" + code); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
   if (loading || !data) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="text-4xl animate-bounce">✈️</div></div>;
 
-  const { setup = {}, itinerary = [], expenses = [], packing = [], packChecks = {} } = data;
+  const { setup = {}, itinerary = [], expenses = [], packing = [], packChecks = {}, paidDebts = {} } = data;
   const names = (setup.members || []).map(m => m.name).filter(Boolean);
 
   return (
@@ -336,7 +337,7 @@ function TripView({ code, onBack }) {
         {tab === "setup" && <SetupTab setup={setup} setSetup={setSetup} />}
         {tab === "itinerary" && <ItineraryTab setup={setup} items={itinerary} setItems={setItinerary} />}
         {tab === "expenses" && <ExpensesTab setup={setup} expenses={expenses} setExpenses={setExpenses} />}
-        {tab === "debts" && <DebtsTab setup={setup} expenses={expenses} />}
+        {tab === "debts" && <DebtsTab setup={setup} expenses={expenses} paidDebts={paidDebts} setPaidDebts={setPaidDebts} />}
         {tab === "packing" && <PackingTab names={names} groups={packing} setGroups={setPacking} checks={packChecks} setChecks={setPackChecks} />}
       </div>
     </div>
@@ -677,7 +678,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
 
   const renderTimeGutter = () => (
     <div className="shrink-0 w-14 border-r border-gray-200 relative bg-white" style={{ height: HOURS.length * SLOT_H }}>
-      {HOURS.map(h => (
+      {HOURS.map(h => h === 0 ? null : (
         <div key={h} className="absolute w-full text-right pr-2 text-xs text-gray-400 -translate-y-1/2" style={{ top: h * SLOT_H }}>
           {String(h).padStart(2, "0")}:00
         </div>
@@ -724,7 +725,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
 
       {/* Calendar */}
       <Card className="overflow-hidden">
-        <div ref={scrollRef} className="overflow-auto" style={{ maxHeight: "calc(100vh - 300px)", userSelect: drag ? "none" : "auto" }}>
+        <div ref={scrollRef} className="overflow-auto" style={{ maxHeight: "calc(100vh - 200px)", userSelect: drag ? "none" : "auto" }}>
           <div style={{ minWidth: (viewMode === "week" ? dates.length : visiblePeople.length) * 120 + 56 }}>
             {/* Sticky header */}
             <div className="flex border-b border-gray-200 bg-white sticky top-0" style={{ zIndex: 25 }}>
@@ -840,9 +841,11 @@ function ExpensesTab({ setup, expenses = [], setExpenses }) {
 }
 
 // ============ DEBTS ============
-function DebtsTab({ setup, expenses = [] }) {
+function DebtsTab({ setup, expenses = [], paidDebts = {}, setPaidDebts }) {
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const { bal, totalPaid, settlements } = calcDebts(names, expenses);
+  const togglePaid = (key) => setPaidDebts(p => ({ ...(p || {}), [key]: !(p || {})[key] }));
+  const paidCount = settlements.filter((s, i) => paidDebts[`${s.from}-${s.to}`]).length;
   return (
     <div className="space-y-5">
       <Card className="p-5"><h3 className="text-sm font-semibold text-gray-700 mb-4">💰 Balance</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{names.map(n => { const b = Math.round(bal[n] || 0); return (
@@ -851,12 +854,23 @@ function DebtsTab({ setup, expenses = [] }) {
           <div className={`text-lg font-bold ${b > 0 ? "text-emerald-600" : b < 0 ? "text-red-500" : "text-gray-400"}`}>{b > 0 ? "+" : ""}{fmt(b)}</div>
           <div className="text-xs text-gray-400 mt-0.5">Paid: {fmt(Math.round(totalPaid[n] || 0))}</div>
         </div>); })}</div></Card>
-      <Card className="p-5"><h3 className="text-sm font-semibold text-gray-700 mb-4">🤝 Who Pays Whom</h3>{settlements.length === 0 ? <div className="text-center py-6"><div className="text-3xl mb-2">✅</div><p className="text-sm text-gray-400">Everyone settled!</p></div> : <div className="space-y-3">{settlements.map((s, i) => (
-        <div key={i} className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-r from-red-50 via-white to-emerald-50 border">
-          <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xs font-bold">{s.from[0]}</div><span className="font-semibold text-sm text-red-700">{s.from}</span></div>
-          <div className="flex-1 flex items-center gap-2"><div className="flex-1 border-t-2 border-dashed border-gray-200" /><div className="bg-gray-900 text-white px-3 py-1 rounded-full text-sm font-bold">{fmt(s.amt)}</div><div className="flex-1 border-t-2 border-dashed border-gray-200" /><span className="text-gray-400">→</span></div>
-          <div className="flex items-center gap-2"><span className="font-semibold text-sm text-emerald-700">{s.to}</span><div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">{s.to[0]}</div></div>
-        </div>))}</div>}</Card>
+      <Card className="p-5">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-sm font-semibold text-gray-700">🤝 Who Pays Whom</h3>
+          {settlements.length > 0 && <span className="text-xs text-gray-400">{paidCount}/{settlements.length} paid</span>}
+        </div>
+        {settlements.length === 0 ? <div className="text-center py-6"><div className="text-3xl mb-2">✅</div><p className="text-sm text-gray-400">Everyone settled!</p></div> : <div className="space-y-3">{settlements.map((s, i) => {
+          const key = `${s.from}-${s.to}`;
+          const isPaid = !!paidDebts[key];
+          return (
+            <div key={i} className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${isPaid ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-r from-red-50 via-white to-emerald-50 border-gray-100"}`}>
+              <div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-red-100 text-red-700"}`}>{s.from[0]}</div><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-red-700"}`}>{s.from}</span></div>
+              <div className="flex-1 flex items-center gap-2"><div className="flex-1 border-t-2 border-dashed border-gray-200" /><div className={`px-3 py-1 rounded-full text-sm font-bold ${isPaid ? "bg-emerald-500 text-white" : "bg-gray-900 text-white"}`}>{isPaid ? "✓ Paid" : fmt(s.amt)}</div><div className="flex-1 border-t-2 border-dashed border-gray-200" /><span className="text-gray-400">→</span></div>
+              <div className="flex items-center gap-2"><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-emerald-700"}`}>{s.to}</span><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700"}`}>{s.to[0]}</div></div>
+              <button onClick={() => togglePaid(key)} className={`shrink-0 ml-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isPaid ? "bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600" : "bg-gray-100 text-gray-500 hover:bg-emerald-100 hover:text-emerald-700"}`}>{isPaid ? "Undo" : "Mark Paid"}</button>
+            </div>);
+        })}</div>}
+      </Card>
     </div>
   );
 }
