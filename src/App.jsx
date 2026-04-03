@@ -477,7 +477,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const [viewMode, setViewMode] = useState("week"); // "week" = all days, "day" = one day all people
   const [viewPerson, setViewPerson] = useState("__all__");
   const [viewDay, setViewDay] = useState(dates[0] ? isoD(dates[0]) : "");
-  const [modal, setModal] = useState(null); // { item } or { date, startTime, endTime } for new
+  const [modal, setModal] = useState(null); // { id, snapshot, isNew } — id to track live, snapshot as fallback
   const [drag, setDrag] = useState(null); // { date, col, startSlot, currentSlot }
   const gridRef = useRef(null);
 
@@ -487,10 +487,10 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const add = (date, startTime, endTime, assignedTo) => {
     const item = { id: genId(), date, time: startTime, endTime: endTime || addMinutes(startTime, 60), activity: "", location: "", locationUrl: "", assignedTo: assignedTo || [...names], notes: "" };
     setItems(p => [...(p || []), item]);
-    setModal({ item, isNew: true });
+    setModal({ id: item.id, snapshot: item, isNew: true });
   };
 
-  const rm = (id) => { setItems(p => (p || []).filter(r => r.id !== id)); setModal(null); };
+  const rm = (id) => { setModal(null); setItems(p => (p || []).filter(r => r.id !== id)); };
   const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: v } : r));
   const togA = (id, n) => setItems(p => (p || []).map(r => r.id !== id ? r : { ...r, assignedTo: r.assignedTo?.includes(n) ? r.assignedTo.filter(x => x !== n) : [...(r.assignedTo || []), n] }));
 
@@ -523,12 +523,10 @@ function ItineraryTab({ setup, items = [], setItems }) {
     if (!drag) return;
     const s = Math.min(drag.startSlot, drag.currentSlot);
     const e = Math.max(drag.startSlot, drag.currentSlot);
-    if (e - s >= 1) {
-      const startTime = minToTime(slotToMin(s / 2));
-      const endTime = minToTime(slotToMin((e + 1) / 2));
-      const assignedTo = viewMode === "day" && drag.col !== "__all__" ? [drag.col] : [...names];
-      add(drag.date, startTime, endTime, assignedTo);
-    }
+    const startTime = minToTime(slotToMin(s / 2));
+    const endTime = e - s >= 1 ? minToTime(slotToMin((e + 1) / 2)) : minToTime(slotToMin(s / 2) + 60);
+    const assignedTo = viewMode === "day" && drag.col !== "__all__" ? [drag.col] : [...names];
+    add(drag.date, startTime, endTime, assignedTo);
     setDrag(null);
   }, [drag, names, viewMode]);
 
@@ -566,7 +564,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
     const color = item.assignedTo?.length === 1 ? getColor(item.assignedTo[0]) : "#3b82f6";
     const compact = height < 36;
     return (
-      <div key={item.id} onClick={(e) => { e.stopPropagation(); setModal({ item }); }}
+      <div key={item.id} onClick={(e) => { e.stopPropagation(); setModal({ id: item.id, snapshot: item }); }}
         className="absolute left-1 right-1 rounded-lg px-2 py-1 cursor-pointer overflow-hidden border border-white/30 hover:brightness-110 transition-all z-20"
         style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}>
         {compact ? (
@@ -581,9 +579,9 @@ function ItineraryTab({ setup, items = [], setItems }) {
     );
   };
 
-  // Time gutter
-  const TimeGutter = () => (
-    <div className="shrink-0 w-14 border-r border-gray-200 relative" style={{ height: HOURS.length * SLOT_H }}>
+  // Render time gutter
+  const renderTimeGutter = () => (
+    <div className="shrink-0 w-14 border-r border-gray-200 relative bg-white" style={{ height: HOURS.length * SLOT_H }}>
       {HOURS.map(h => (
         <div key={h} className="absolute w-full text-right pr-2 text-xs text-gray-400 -translate-y-1/2" style={{ top: (h - 6) * SLOT_H }}>
           {String(h).padStart(2, "0")}:00
@@ -592,8 +590,8 @@ function ItineraryTab({ setup, items = [], setItems }) {
     </div>
   );
 
-  // Column for one date+person combo
-  const CalCol = ({ date, colName, colItems }) => (
+  // Render column
+  const renderCol = (date, colName, colItems) => (
     <div className="flex-1 min-w-[120px] relative border-r border-gray-100" style={{ height: HOURS.length * SLOT_H }}
       onMouseDown={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const slot = Math.floor((e.clientY - rect.top) / (SLOT_H / 2)); handleMouseDown(date, colName, slot, e); }}>
       {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - 6) * SLOT_H }} />)}
@@ -603,106 +601,27 @@ function ItineraryTab({ setup, items = [], setItems }) {
     </div>
   );
 
-  // ---- WEEK VIEW: all days as columns, filter by person ----
-  const WeekView = () => {
-    const filtered = viewPerson === "__all__" ? items : (items || []).filter(r => r.assignedTo?.includes(viewPerson));
-    return (
-      <div className="flex overflow-x-auto" ref={gridRef}>
-        <TimeGutter />
-        {dates.map(d => {
-          const ds = isoD(d);
-          const dayItems = (filtered || []).filter(r => r.date === ds);
-          return (
-            <div key={ds} className="flex-1 min-w-[120px]">
-              <div className="sticky top-0 z-30 bg-white border-b border-gray-200 text-center py-2 px-1">
-                <div className="text-xs font-semibold text-gray-700">{fmtD(d)}</div>
-              </div>
-              <CalCol date={ds} colName={viewPerson} colItems={dayItems} />
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  // Compute view data
+  const weekFiltered = viewPerson === "__all__" ? items : (items || []).filter(r => r.assignedTo?.includes(viewPerson));
+  const dayItems = (items || []).filter(r => r.date === viewDay);
 
-  // ---- DAY VIEW: one day, all people as columns ----
-  const DayView = () => {
-    const dayItems = (items || []).filter(r => r.date === viewDay);
-    return (
-      <div className="flex overflow-x-auto" ref={gridRef}>
-        <TimeGutter />
-        {names.map((n, i) => {
-          const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
-          return (
-            <div key={n} className="flex-1 min-w-[120px]">
-              <div className="sticky top-0 z-30 bg-white border-b border-gray-200 text-center py-2 px-1">
-                <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
-                <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
-              </div>
-              <CalCol date={viewDay} colName={n} colItems={personItems} />
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  // Modal data
+  const modalItem = modal ? (items || []).find(r => r.id === modal.id) || modal.snapshot : null;
 
-  // ---- EVENT MODAL ----
-  const EventModal = () => {
-    if (!modal) return null;
-    const item = modal.item;
-    const current = (items || []).find(r => r.id === item.id) || item;
-    return (
-      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
-          <div className="flex justify-between items-center">
-            <h3 className="text-base font-bold text-gray-800">{modal.isNew ? "New Event" : "Edit Event"}</h3>
-            <button onClick={() => setModal(null)} className="text-gray-300 hover:text-gray-600 text-xl">×</button>
-          </div>
-          <Inp value={current.activity || ""} onChange={e => upd(item.id, "activity", e.target.value)} placeholder="Event name..." className="w-full text-base font-semibold" autoFocus />
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Start</label>
-              <Inp type="time" value={current.time || ""} onChange={e => upd(item.id, "time", e.target.value)} className="w-full" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">End</label>
-              <Inp type="time" value={current.endTime || ""} onChange={e => upd(item.id, "endTime", e.target.value)} className="w-full" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Date</label>
-            <Sel value={current.date || ""} onChange={e => upd(item.id, "date", e.target.value)} className="w-full">
-              {dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}
-            </Sel>
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">📍 Location</label>
-            <Inp value={current.location || ""} onChange={e => upd(item.id, "location", e.target.value)} placeholder="Place name" className="w-full" />
-            <Inp value={current.locationUrl || ""} onChange={e => upd(item.id, "locationUrl", e.target.value)} placeholder="Google Maps link (optional)" className="w-full mt-1.5 text-xs" />
-            {current.locationUrl && <a href={current.locationUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline mt-1 inline-block">↗ Open in Maps</a>}
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-1.5 block">Who's joining</label>
-            <div className="flex gap-1.5 flex-wrap">
-              {names.map(n => (
-                <button key={n} onClick={() => togA(item.id, n)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${current.assignedTo?.includes(n) ? "text-white" : "bg-gray-100 text-gray-400"}`}
-                  style={current.assignedTo?.includes(n) ? { background: getColor(n) } : {}}>
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <Inp value={current.notes || ""} onChange={e => upd(item.id, "notes", e.target.value)} placeholder="Notes..." className="w-full text-xs" />
-          <div className="flex justify-between pt-2">
-            <button onClick={() => rm(item.id)} className="text-xs text-red-400 hover:text-red-600">Delete event</button>
-            <BtnDark onClick={() => setModal(null)}>Done</BtnDark>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // Column headers for week view
+  const weekHeaders = dates.map(d => (
+    <div key={isoD(d)} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
+      <div className="text-xs font-semibold text-gray-700">{fmtD(d)}</div>
+    </div>
+  ));
+
+  // Column headers for day view
+  const dayHeaders = names.map(n => (
+    <div key={n} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
+      <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
+      <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
+    </div>
+  ));
 
   return (
     <div className="space-y-3">
@@ -730,16 +649,82 @@ function ItineraryTab({ setup, items = [], setItems }) {
       </Card>
 
       <Card className="overflow-hidden">
-        <div className="overflow-auto max-h-[70vh]" style={{ userSelect: drag ? "none" : "auto" }}>
-          {viewMode === "week" ? <WeekView /> : <DayView />}
+        {/* Sticky header row */}
+        <div className="flex border-b border-gray-200 bg-white sticky top-0 z-30">
+          <div className="shrink-0 w-14 border-r border-gray-200" />
+          {viewMode === "week" ? weekHeaders : dayHeaders}
+        </div>
+        {/* Scrollable grid body */}
+        <div className="overflow-auto max-h-[70vh]" ref={gridRef} style={{ userSelect: drag ? "none" : "auto" }}>
+          <div className="flex">
+            {renderTimeGutter()}
+            {viewMode === "week" ? dates.map(d => {
+              const ds = isoD(d);
+              const colItems = (weekFiltered || []).filter(r => r.date === ds);
+              return <div key={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
+            }) : names.map(n => {
+              const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
+              return <div key={n} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
+            })}
+          </div>
         </div>
       </Card>
 
       <div className="text-center">
-        <span className="text-xs text-gray-400">Click & drag on the calendar to create events</span>
+        <span className="text-xs text-gray-400">Click or drag on the calendar to create events</span>
       </div>
 
-      <EventModal />
+      {/* Event Modal — inline, not a sub-component */}
+      {modal && modalItem && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center">
+              <h3 className="text-base font-bold text-gray-800">{modal.isNew ? "New Event" : "Edit Event"}</h3>
+              <button onClick={() => setModal(null)} className="text-gray-300 hover:text-gray-600 text-xl">×</button>
+            </div>
+            <Inp value={modalItem.activity || ""} onChange={e => upd(modal.id, "activity", e.target.value)} placeholder="Event name..." className="w-full text-base font-semibold" autoFocus />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Start</label>
+                <Inp type="time" value={modalItem.time || ""} onChange={e => upd(modal.id, "time", e.target.value)} className="w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">End</label>
+                <Inp type="time" value={modalItem.endTime || ""} onChange={e => upd(modal.id, "endTime", e.target.value)} className="w-full" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Date</label>
+              <Sel value={modalItem.date || ""} onChange={e => upd(modal.id, "date", e.target.value)} className="w-full">
+                {dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}
+              </Sel>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">📍 Location</label>
+              <Inp value={modalItem.location || ""} onChange={e => upd(modal.id, "location", e.target.value)} placeholder="Place name" className="w-full" />
+              <Inp value={modalItem.locationUrl || ""} onChange={e => upd(modal.id, "locationUrl", e.target.value)} placeholder="Google Maps link (optional)" className="w-full mt-1.5 text-xs" />
+              {modalItem.locationUrl && <a href={modalItem.locationUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline mt-1 inline-block">↗ Open in Maps</a>}
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1.5 block">Who's joining</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {names.map(n => (
+                  <button key={n} onClick={() => togA(modal.id, n)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${modalItem.assignedTo?.includes(n) ? "text-white" : "bg-gray-100 text-gray-400"}`}
+                    style={modalItem.assignedTo?.includes(n) ? { background: getColor(n) } : {}}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Inp value={modalItem.notes || ""} onChange={e => upd(modal.id, "notes", e.target.value)} placeholder="Notes..." className="w-full text-xs" />
+            <div className="flex justify-between pt-2">
+              <button onClick={() => rm(modal.id)} className="text-xs text-red-400 hover:text-red-600">Delete event</button>
+              <BtnDark onClick={() => setModal(null)}>Done</BtnDark>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
