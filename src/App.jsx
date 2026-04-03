@@ -108,9 +108,9 @@ async function doExport(setup, itinerary, expenses) {
 
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([
     ["ITINERARY"], [],
-    ["Date", "Time", "Activity", "Location", "Who", "Notes"],
+    ["Date", "Start", "End", "Activity", "Location", "Maps Link", "Who", "Notes"],
     ...(itinerary || []).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
-      .map(r => [r.date, r.time, r.activity, r.location, r.assignedTo?.join(", "), r.notes])
+      .map(r => [r.date, r.time, r.endTime || "", r.activity, r.location, r.locationUrl || "", r.assignedTo?.join(", "), r.notes])
   ]), "Itinerary");
 
   const er = [["EXPENSES"], [], ["Date", "Desc", "Category", "Amount", "Paid By", ...names.map(n => n + " share")]];
@@ -466,50 +466,280 @@ function SetupTab({ setup, setSetup }) {
   );
 }
 
-// ============ ITINERARY ============
+// ============ ITINERARY (Calendar View) ============
+const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 06:00 – 23:00
+const SLOT_H = 48; // px per hour
+const MEMBER_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#eab308", "#ef4444", "#06b6d4", "#84cc16", "#f43f5e"];
+
 function ItineraryTab({ setup, items = [], setItems }) {
   const dates = getDates(setup?.startDate, setup?.endDate);
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
-  const [fp, setFp] = useState("__all__");
-  const add = (d) => setItems(p => [...(p || []), { id: genId(), date: isoD(d), time: "09:00", activity: "", location: "", assignedTo: [...names], notes: "" }]);
-  const rm = (id) => setItems(p => (p || []).filter(r => r.id !== id));
+  const [viewMode, setViewMode] = useState("week"); // "week" = all days, "day" = one day all people
+  const [viewPerson, setViewPerson] = useState("__all__");
+  const [viewDay, setViewDay] = useState(dates[0] ? isoD(dates[0]) : "");
+  const [modal, setModal] = useState(null); // { item } or { date, startTime, endTime } for new
+  const [drag, setDrag] = useState(null); // { date, col, startSlot, currentSlot }
+  const gridRef = useRef(null);
+
+  // Keep viewDay in sync
+  useEffect(() => { if (dates.length && !dates.find(d => isoD(d) === viewDay)) setViewDay(isoD(dates[0])); }, [dates.length]);
+
+  const add = (date, startTime, endTime, assignedTo) => {
+    const item = { id: genId(), date, time: startTime, endTime: endTime || addMinutes(startTime, 60), activity: "", location: "", locationUrl: "", assignedTo: assignedTo || [...names], notes: "" };
+    setItems(p => [...(p || []), item]);
+    setModal({ item, isNew: true });
+  };
+
+  const rm = (id) => { setItems(p => (p || []).filter(r => r.id !== id)); setModal(null); };
   const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: v } : r));
   const togA = (id, n) => setItems(p => (p || []).map(r => r.id !== id ? r : { ...r, assignedTo: r.assignedTo?.includes(n) ? r.assignedTo.filter(x => x !== n) : [...(r.assignedTo || []), n] }));
-  const fil = (rows) => fp === "__all__" ? rows : rows.filter(r => r.assignedTo?.includes(fp));
-  return (
-    <div className="space-y-4">
-      <Card className="p-4"><div className="flex items-center gap-3 flex-wrap">
-        <span className="text-xs text-gray-400 font-medium">View:</span>
-        <div className="flex gap-1.5 flex-wrap">
-          <button onClick={() => setFp("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${fp === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
-          {names.map(n => <button key={n} onClick={() => setFp(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${fp === n ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>{n}</button>)}
-        </div>
-      </div></Card>
 
-      {dates.map(d => {
-        const ds = isoD(d), all = (items || []).filter(r => r.date === ds).sort((a, b) => (a.time || "").localeCompare(b.time || "")), rows = fil(all);
-        return (
-          <Card key={ds} className="overflow-hidden">
-            <div className="flex justify-between items-center px-5 py-3 bg-gray-50 border-b">
-              <div className="flex items-center gap-3"><span className="font-semibold text-sm text-gray-800">{fmtD(d)}</span><span className="text-xs text-gray-400">{rows.length} act.</span></div>
-              <button onClick={() => add(d)} className="text-sm font-medium text-gray-600 hover:text-gray-900 bg-white border px-3 py-1 rounded-full">+</button>
-            </div>
-            {rows.length === 0 && <p className="p-5 text-sm text-gray-300 italic text-center">{fp !== "__all__" ? `No activities for ${fp}` : "Tap + to add"}</p>}
-            <div className="divide-y">{rows.map(r => (
-              <div key={r.id} className="p-4 space-y-2">
-                <div className="flex gap-2 items-center flex-wrap">
-                  <Inp type="time" value={r.time || ""} onChange={e => upd(r.id, "time", e.target.value)} className="w-24" />
-                  <Inp value={r.activity || ""} onChange={e => upd(r.id, "activity", e.target.value)} placeholder="Activity" className="flex-1 min-w-[120px]" />
-                  <Inp value={r.location || ""} onChange={e => upd(r.id, "location", e.target.value)} placeholder="📍 Location" className="flex-1 min-w-[100px]" />
-                  <button onClick={() => rm(r.id)} className="text-gray-300 hover:text-red-400 text-lg">×</button>
-                </div>
-                <div className="flex gap-1.5 flex-wrap items-center"><span className="text-xs text-gray-400">Who:</span>{names.map(n => <button key={n} onClick={() => togA(r.id, n)} className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all ${r.assignedTo?.includes(n) ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-400"}`}>{n}</button>)}</div>
-                <Inp value={r.notes || ""} onChange={e => upd(r.id, "notes", e.target.value)} placeholder="Notes..." className="w-full text-xs" />
+  const addMinutes = (t, m) => {
+    const [h, mi] = (t || "09:00").split(":").map(Number);
+    const total = h * 60 + mi + m;
+    return `${String(Math.min(Math.floor(total / 60), 23)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+  };
+
+  const timeToMin = (t) => { const [h, m] = (t || "06:00").split(":").map(Number); return h * 60 + m; };
+  const minToTime = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const slotToMin = (slot) => (slot + 6) * 60; // slot 0 = 06:00
+
+  // Drag handlers for creating events
+  const handleMouseDown = (date, col, slot, e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setDrag({ date, col, startSlot: slot, currentSlot: slot });
+  };
+
+  const handleMouseMove = useCallback((e) => {
+    if (!drag || !gridRef.current) return;
+    const rect = gridRef.current.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const slot = Math.max(0, Math.min(Math.floor(y / (SLOT_H / 2)), HOURS.length * 2 - 1));
+    setDrag(prev => prev ? { ...prev, currentSlot: slot } : null);
+  }, [drag]);
+
+  const handleMouseUp = useCallback(() => {
+    if (!drag) return;
+    const s = Math.min(drag.startSlot, drag.currentSlot);
+    const e = Math.max(drag.startSlot, drag.currentSlot);
+    if (e - s >= 1) {
+      const startTime = minToTime(slotToMin(s / 2));
+      const endTime = minToTime(slotToMin((e + 1) / 2));
+      const assignedTo = viewMode === "day" && drag.col !== "__all__" ? [drag.col] : [...names];
+      add(drag.date, startTime, endTime, assignedTo);
+    }
+    setDrag(null);
+  }, [drag, names, viewMode]);
+
+  useEffect(() => {
+    if (drag) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      return () => { window.removeEventListener("mousemove", handleMouseMove); window.removeEventListener("mouseup", handleMouseUp); };
+    }
+  }, [drag, handleMouseMove, handleMouseUp]);
+
+  // Get event position
+  const getPos = (item) => {
+    const start = timeToMin(item.time) - 360; // offset from 06:00
+    const end = timeToMin(item.endTime || addMinutes(item.time, 60)) - 360;
+    return { top: (start / 60) * SLOT_H, height: Math.max(((end - start) / 60) * SLOT_H, SLOT_H / 2) };
+  };
+
+  // Get color for member
+  const getColor = (name) => MEMBER_COLORS[names.indexOf(name) % MEMBER_COLORS.length] || "#6b7280";
+
+  // Render drag preview
+  const renderDragPreview = (colDate, colName) => {
+    if (!drag || drag.date !== colDate || drag.col !== colName) return null;
+    const s = Math.min(drag.startSlot, drag.currentSlot);
+    const e = Math.max(drag.startSlot, drag.currentSlot);
+    const top = (s / 2) * SLOT_H;
+    const height = ((e - s + 1) / 2) * SLOT_H;
+    return <div className="absolute left-1 right-1 rounded-lg bg-blue-200 opacity-50 border-2 border-blue-400 z-10 pointer-events-none" style={{ top, height }} />;
+  };
+
+  // Render event block
+  const renderEvent = (item, showName) => {
+    const { top, height } = getPos(item);
+    const color = item.assignedTo?.length === 1 ? getColor(item.assignedTo[0]) : "#3b82f6";
+    const compact = height < 36;
+    return (
+      <div key={item.id} onClick={(e) => { e.stopPropagation(); setModal({ item }); }}
+        className="absolute left-1 right-1 rounded-lg px-2 py-1 cursor-pointer overflow-hidden border border-white/30 hover:brightness-110 transition-all z-20"
+        style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}>
+        {compact ? (
+          <div className="text-xs font-medium truncate" style={{ color }}>{item.time?.slice(0, 5)} {item.activity || "Untitled"}</div>
+        ) : (<>
+          <div className="text-xs font-semibold truncate" style={{ color }}>{item.activity || "Untitled"}</div>
+          <div className="text-xs text-gray-500 truncate">{item.time?.slice(0, 5)} – {(item.endTime || "").slice(0, 5)}</div>
+          {item.location && <div className="text-xs text-gray-400 truncate">📍 {item.location}</div>}
+          {showName && item.assignedTo?.length > 0 && <div className="text-xs text-gray-400 truncate">{item.assignedTo.join(", ")}</div>}
+        </>)}
+      </div>
+    );
+  };
+
+  // Time gutter
+  const TimeGutter = () => (
+    <div className="shrink-0 w-14 border-r border-gray-200 relative" style={{ height: HOURS.length * SLOT_H }}>
+      {HOURS.map(h => (
+        <div key={h} className="absolute w-full text-right pr-2 text-xs text-gray-400 -translate-y-1/2" style={{ top: (h - 6) * SLOT_H }}>
+          {String(h).padStart(2, "0")}:00
+        </div>
+      ))}
+    </div>
+  );
+
+  // Column for one date+person combo
+  const CalCol = ({ date, colName, colItems }) => (
+    <div className="flex-1 min-w-[120px] relative border-r border-gray-100" style={{ height: HOURS.length * SLOT_H }}
+      onMouseDown={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const slot = Math.floor((e.clientY - rect.top) / (SLOT_H / 2)); handleMouseDown(date, colName, slot, e); }}>
+      {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - 6) * SLOT_H }} />)}
+      {HOURS.map(h => <div key={h + "half"} className="absolute w-full border-t border-gray-50" style={{ top: (h - 6) * SLOT_H + SLOT_H / 2 }} />)}
+      {renderDragPreview(date, colName)}
+      {colItems.map(item => renderEvent(item, viewMode === "week"))}
+    </div>
+  );
+
+  // ---- WEEK VIEW: all days as columns, filter by person ----
+  const WeekView = () => {
+    const filtered = viewPerson === "__all__" ? items : (items || []).filter(r => r.assignedTo?.includes(viewPerson));
+    return (
+      <div className="flex overflow-x-auto" ref={gridRef}>
+        <TimeGutter />
+        {dates.map(d => {
+          const ds = isoD(d);
+          const dayItems = (filtered || []).filter(r => r.date === ds);
+          return (
+            <div key={ds} className="flex-1 min-w-[120px]">
+              <div className="sticky top-0 z-30 bg-white border-b border-gray-200 text-center py-2 px-1">
+                <div className="text-xs font-semibold text-gray-700">{fmtD(d)}</div>
               </div>
-            ))}</div>
-          </Card>
-        );
-      })}
+              <CalCol date={ds} colName={viewPerson} colItems={dayItems} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ---- DAY VIEW: one day, all people as columns ----
+  const DayView = () => {
+    const dayItems = (items || []).filter(r => r.date === viewDay);
+    return (
+      <div className="flex overflow-x-auto" ref={gridRef}>
+        <TimeGutter />
+        {names.map((n, i) => {
+          const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
+          return (
+            <div key={n} className="flex-1 min-w-[120px]">
+              <div className="sticky top-0 z-30 bg-white border-b border-gray-200 text-center py-2 px-1">
+                <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
+                <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
+              </div>
+              <CalCol date={viewDay} colName={n} colItems={personItems} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ---- EVENT MODAL ----
+  const EventModal = () => {
+    if (!modal) return null;
+    const item = modal.item;
+    const current = (items || []).find(r => r.id === item.id) || item;
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className="flex justify-between items-center">
+            <h3 className="text-base font-bold text-gray-800">{modal.isNew ? "New Event" : "Edit Event"}</h3>
+            <button onClick={() => setModal(null)} className="text-gray-300 hover:text-gray-600 text-xl">×</button>
+          </div>
+          <Inp value={current.activity || ""} onChange={e => upd(item.id, "activity", e.target.value)} placeholder="Event name..." className="w-full text-base font-semibold" autoFocus />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Start</label>
+              <Inp type="time" value={current.time || ""} onChange={e => upd(item.id, "time", e.target.value)} className="w-full" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">End</label>
+              <Inp type="time" value={current.endTime || ""} onChange={e => upd(item.id, "endTime", e.target.value)} className="w-full" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Date</label>
+            <Sel value={current.date || ""} onChange={e => upd(item.id, "date", e.target.value)} className="w-full">
+              {dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}
+            </Sel>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">📍 Location</label>
+            <Inp value={current.location || ""} onChange={e => upd(item.id, "location", e.target.value)} placeholder="Place name" className="w-full" />
+            <Inp value={current.locationUrl || ""} onChange={e => upd(item.id, "locationUrl", e.target.value)} placeholder="Google Maps link (optional)" className="w-full mt-1.5 text-xs" />
+            {current.locationUrl && <a href={current.locationUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline mt-1 inline-block">↗ Open in Maps</a>}
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">Who's joining</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {names.map(n => (
+                <button key={n} onClick={() => togA(item.id, n)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${current.assignedTo?.includes(n) ? "text-white" : "bg-gray-100 text-gray-400"}`}
+                  style={current.assignedTo?.includes(n) ? { background: getColor(n) } : {}}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Inp value={current.notes || ""} onChange={e => upd(item.id, "notes", e.target.value)} placeholder="Notes..." className="w-full text-xs" />
+          <div className="flex justify-between pt-2">
+            <button onClick={() => rm(item.id)} className="text-xs text-red-400 hover:text-red-600">Delete event</button>
+            <BtnDark onClick={() => setModal(null)}>Done</BtnDark>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card className="p-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex gap-1.5">
+            <button onClick={() => setViewMode("week")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "week" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>📅 Week</button>
+            <button onClick={() => setViewMode("day")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "day" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>👥 Day</button>
+          </div>
+          <div className="h-5 w-px bg-gray-200" />
+          {viewMode === "week" ? (
+            <div className="flex gap-1.5 flex-wrap">
+              <button onClick={() => setViewPerson("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
+              {names.map(n => <button key={n} onClick={() => setViewPerson(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === n ? "text-white" : "bg-gray-100 text-gray-500"}`} style={viewPerson === n ? { background: getColor(n) } : {}}>{n}</button>)}
+            </div>
+          ) : (
+            <div className="flex gap-1.5 flex-wrap">
+              {dates.map(d => {
+                const ds = isoD(d);
+                return <button key={ds} onClick={() => setViewDay(ds)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewDay === ds ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>{fmtD(d)}</button>;
+              })}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-auto max-h-[70vh]" style={{ userSelect: drag ? "none" : "auto" }}>
+          {viewMode === "week" ? <WeekView /> : <DayView />}
+        </div>
+      </Card>
+
+      <div className="text-center">
+        <span className="text-xs text-gray-400">Click & drag on the calendar to create events</span>
+      </div>
+
+      <EventModal />
     </div>
   );
 }
