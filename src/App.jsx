@@ -471,63 +471,130 @@ const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 06:00 – 23:00
 const SLOT_H = 48; // px per hour
 const MEMBER_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#eab308", "#ef4444", "#06b6d4", "#84cc16", "#f43f5e"];
 
+// Overlap layout: assign column index and total columns to overlapping events
+function layoutEvents(evts, timeToMin) {
+  if (!evts.length) return [];
+  const sorted = evts.map(e => ({ ...e, _s: timeToMin(e.time), _e: timeToMin(e.endTime || e.time) })).sort((a, b) => a._s - b._s || a._e - b._e);
+  const groups = [];
+  let group = [sorted[0]], groupEnd = sorted[0]._e;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i]._s < groupEnd) {
+      group.push(sorted[i]);
+      groupEnd = Math.max(groupEnd, sorted[i]._e);
+    } else {
+      groups.push(group);
+      group = [sorted[i]];
+      groupEnd = sorted[i]._e;
+    }
+  }
+  groups.push(group);
+  const result = [];
+  groups.forEach(g => {
+    const cols = [];
+    g.forEach(evt => {
+      let placed = false;
+      for (let c = 0; c < cols.length; c++) {
+        if (cols[c] <= evt._s) { cols[c] = evt._e; result.push({ ...evt, _col: c, _total: 0 }); placed = true; break; }
+      }
+      if (!placed) { result.push({ ...evt, _col: cols.length, _total: 0 }); cols.push(evt._e); }
+    });
+    const total = cols.length;
+    result.forEach(r => { if (g.find(e => e.id === r.id)) r._total = total; });
+  });
+  return result;
+}
+
 function ItineraryTab({ setup, items = [], setItems }) {
   const dates = getDates(setup?.startDate, setup?.endDate);
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
-  const [viewMode, setViewMode] = useState("week"); // "week" = all days, "day" = one day all people
+  const [viewMode, setViewMode] = useState("week");
   const [viewPerson, setViewPerson] = useState("__all__");
   const [viewDay, setViewDay] = useState(dates[0] ? isoD(dates[0]) : "");
-  const [modal, setModal] = useState(null); // { id, snapshot, isNew } — id to track live, snapshot as fallback
-  const [drag, setDrag] = useState(null); // { date, col, startSlot, currentSlot }
+  const [dayPeople, setDayPeople] = useState([]); // selected people in day view (empty = all)
+  const [modal, setModal] = useState(null);
+  const [drag, setDrag] = useState(null); // { type: "create"|"move"|"resize-top"|"resize-bottom", ... }
   const gridRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  // Keep viewDay in sync
   useEffect(() => { if (dates.length && !dates.find(d => isoD(d) === viewDay)) setViewDay(isoD(dates[0])); }, [dates.length]);
 
+  const timeToMin = (t) => { const [h, m] = (t || "06:00").split(":").map(Number); return h * 60 + m; };
+  const minToTime = (m) => { const clamped = Math.max(0, Math.min(m, 1439)); return `${String(Math.floor(clamped / 60)).padStart(2, "0")}:${String(clamped % 60).padStart(2, "0")}`; };
+  const snapTo30 = (m) => Math.round(m / 30) * 30;
+  const getColor = (name) => MEMBER_COLORS[names.indexOf(name) % MEMBER_COLORS.length] || "#6b7280";
+
   const add = (date, startTime, endTime, assignedTo) => {
-    const item = { id: genId(), date, time: startTime, endTime: endTime || addMinutes(startTime, 60), activity: "", location: "", locationUrl: "", assignedTo: assignedTo || [...names], notes: "" };
+    const item = { id: genId(), date, time: startTime, endTime: endTime || minToTime(timeToMin(startTime) + 60), activity: "", location: "", locationUrl: "", assignedTo: assignedTo || [...names], notes: "" };
     setItems(p => [...(p || []), item]);
     setModal({ id: item.id, snapshot: item, isNew: true });
   };
-
   const rm = (id) => { setModal(null); setItems(p => (p || []).filter(r => r.id !== id)); };
   const upd = (id, k, v) => setItems(p => (p || []).map(r => r.id === id ? { ...r, [k]: v } : r));
+  const updMulti = (id, obj) => setItems(p => (p || []).map(r => r.id === id ? { ...r, ...obj } : r));
   const togA = (id, n) => setItems(p => (p || []).map(r => r.id !== id ? r : { ...r, assignedTo: r.assignedTo?.includes(n) ? r.assignedTo.filter(x => x !== n) : [...(r.assignedTo || []), n] }));
 
-  const addMinutes = (t, m) => {
-    const [h, mi] = (t || "09:00").split(":").map(Number);
-    const total = h * 60 + mi + m;
-    return `${String(Math.min(Math.floor(total / 60), 23)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-  };
+  // Toggle person in day view filter
+  const togDayPerson = (n) => setDayPeople(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
 
-  const timeToMin = (t) => { const [h, m] = (t || "06:00").split(":").map(Number); return h * 60 + m; };
-  const minToTime = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-  const slotToMin = (slot) => (slot + 6) * 60; // slot 0 = 06:00
+  // Y position to minutes (relative to scroll container's grid body)
+  const yToMin = (y) => snapTo30(Math.max(360, Math.min((y / SLOT_H) * 60 + 360, 1410)));
 
-  // Drag handlers for creating events
-  const dragTimer = useRef(null);
-  const handleMouseDown = (date, col, slot, e) => {
+  // --- DRAG SYSTEM ---
+  const handleGridMouseDown = (date, col, e) => {
     if (e.button !== 0 || e.target.closest("[data-event]")) return;
     e.preventDefault();
-    setDrag({ date, col, startSlot: slot, currentSlot: slot });
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const startMin = yToMin(y);
+    setDrag({ type: "create", date, col, startMin, currentMin: startMin });
+  };
+
+  const handleEventMouseDown = (item, type, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startMin = timeToMin(item.time);
+    const endMin = timeToMin(item.endTime || minToTime(startMin + 60));
+    setDrag({ type, id: item.id, origStart: startMin, origEnd: endMin, anchorY: e.clientY, startMin, endMin });
   };
 
   const handleMouseMove = useCallback((e) => {
-    if (!drag || !gridRef.current) return;
-    const rect = gridRef.current.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const slot = Math.max(0, Math.min(Math.floor(y / (SLOT_H / 2)), HOURS.length * 2 - 1));
-    setDrag(prev => prev ? { ...prev, currentSlot: slot } : null);
+    if (!drag) return;
+    if (drag.type === "create") {
+      if (!scrollRef.current) return;
+      const gridBody = scrollRef.current.querySelector("[data-gridbody]");
+      if (!gridBody) return;
+      const rect = gridBody.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      setDrag(prev => prev ? { ...prev, currentMin: yToMin(y) } : null);
+    } else {
+      const dy = e.clientY - drag.anchorY;
+      const deltaMin = snapTo30(Math.round((dy / SLOT_H) * 60));
+      if (drag.type === "move") {
+        const newStart = Math.max(360, Math.min(drag.origStart + deltaMin, 1410 - (drag.origEnd - drag.origStart)));
+        const newEnd = newStart + (drag.origEnd - drag.origStart);
+        setDrag(prev => prev ? { ...prev, startMin: newStart, endMin: newEnd } : null);
+        updMulti(drag.id, { time: minToTime(newStart), endTime: minToTime(newEnd) });
+      } else if (drag.type === "resize-bottom") {
+        const newEnd = Math.max(drag.origStart + 30, Math.min(drag.origEnd + deltaMin, 1440));
+        setDrag(prev => prev ? { ...prev, endMin: newEnd } : null);
+        upd(drag.id, "endTime", minToTime(newEnd));
+      } else if (drag.type === "resize-top") {
+        const newStart = Math.max(360, Math.min(drag.origStart + deltaMin, drag.origEnd - 30));
+        setDrag(prev => prev ? { ...prev, startMin: newStart } : null);
+        upd(drag.id, "time", minToTime(newStart));
+      }
+    }
   }, [drag]);
 
   const handleMouseUp = useCallback(() => {
     if (!drag) return;
-    const s = Math.min(drag.startSlot, drag.currentSlot);
-    const e = Math.max(drag.startSlot, drag.currentSlot);
-    const startTime = minToTime(slotToMin(s / 2));
-    const endTime = e - s >= 1 ? minToTime(slotToMin((e + 1) / 2)) : minToTime(slotToMin(s / 2) + 60);
-    const assignedTo = viewMode === "day" && drag.col !== "__all__" ? [drag.col] : [...names];
-    add(drag.date, startTime, endTime, assignedTo);
+    if (drag.type === "create") {
+      const s = Math.min(drag.startMin, drag.currentMin);
+      const e = Math.max(drag.startMin, drag.currentMin);
+      const endMin = e > s ? e + 30 : s + 60;
+      const assignedTo = viewMode === "day" && drag.col !== "__all__" ? [drag.col] : [...names];
+      add(drag.date, minToTime(s), minToTime(Math.min(endMin, 1440)), assignedTo);
+    }
     setDrag(null);
   }, [drag, names, viewMode]);
 
@@ -539,35 +606,25 @@ function ItineraryTab({ setup, items = [], setItems }) {
     }
   }, [drag, handleMouseMove, handleMouseUp]);
 
-  // Get event position
+  // --- POSITION & RENDERING ---
   const getPos = (item) => {
-    const start = timeToMin(item.time) - 360; // offset from 06:00
-    const end = timeToMin(item.endTime || addMinutes(item.time, 60)) - 360;
-    return { top: (start / 60) * SLOT_H, height: Math.max(((end - start) / 60) * SLOT_H, SLOT_H / 2) };
+    const start = timeToMin(item.time) - 360;
+    const end = timeToMin(item.endTime || minToTime(timeToMin(item.time) + 60)) - 360;
+    return { top: (start / 60) * SLOT_H, height: Math.max(((end - start) / 60) * SLOT_H, 12) };
   };
 
-  // Get color for member
-  const getColor = (name) => MEMBER_COLORS[names.indexOf(name) % MEMBER_COLORS.length] || "#6b7280";
-
-  // Render drag preview
-  const renderDragPreview = (colDate, colName) => {
-    if (!drag || drag.date !== colDate || drag.col !== colName) return null;
-    const s = Math.min(drag.startSlot, drag.currentSlot);
-    const e = Math.max(drag.startSlot, drag.currentSlot);
-    const top = (s / 2) * SLOT_H;
-    const height = ((e - s + 1) / 2) * SLOT_H;
-    return <div className="absolute left-1 right-1 rounded-lg bg-blue-200 opacity-50 border-2 border-blue-400 z-10 pointer-events-none" style={{ top, height }} />;
-  };
-
-  // Render event block
-  const renderEvent = (item, showName) => {
+  const renderEvent = (item, showName, col, total) => {
     const { top, height } = getPos(item);
     const color = item.assignedTo?.length === 1 ? getColor(item.assignedTo[0]) : "#3b82f6";
     const compact = height < 36;
+    const w = total > 1 ? `${Math.floor(100 / total)}%` : "calc(100% - 8px)";
+    const left = total > 1 ? `${Math.floor((col / total) * 100)}%` : "4px";
     return (
-      <div key={item.id} data-event="true" onMouseDown={e => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setModal({ id: item.id, snapshot: item }); }}
-        className="absolute left-1 right-1 rounded-lg px-2 py-1 cursor-pointer overflow-hidden border border-white/30 hover:brightness-110 transition-all z-20"
-        style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}>
+      <div key={item.id} data-event="true"
+        className="absolute rounded-lg px-2 py-1 overflow-hidden border border-white/50 hover:brightness-110 transition-all z-20 cursor-grab active:cursor-grabbing"
+        style={{ top, height, width: w, left, background: color + "22", borderLeft: `3px solid ${color}` }}
+        onMouseDown={e => handleEventMouseDown(item, "move", e)}
+        onClick={e => { e.stopPropagation(); setModal({ id: item.id, snapshot: item }); }}>
         {compact ? (
           <div className="text-xs font-medium truncate" style={{ color }}>{item.time?.slice(0, 5)} {item.activity || "Untitled"}</div>
         ) : (<>
@@ -576,11 +633,35 @@ function ItineraryTab({ setup, items = [], setItems }) {
           {item.location && <div className="text-xs text-gray-400 truncate">📍 {item.location}</div>}
           {showName && item.assignedTo?.length > 0 && <div className="text-xs text-gray-400 truncate">{item.assignedTo.join(", ")}</div>}
         </>)}
+        {/* Resize handles */}
+        <div className="absolute top-0 left-0 right-0 h-2 cursor-n-resize" onMouseDown={e => handleEventMouseDown(item, "resize-top", e)} />
+        <div className="absolute bottom-0 left-0 right-0 h-2 cursor-s-resize" onMouseDown={e => handleEventMouseDown(item, "resize-bottom", e)} />
       </div>
     );
   };
 
-  // Render time gutter
+  const renderDragPreview = (colDate, colName) => {
+    if (!drag || drag.type !== "create" || drag.date !== colDate || drag.col !== colName) return null;
+    const s = Math.min(drag.startMin, drag.currentMin) - 360;
+    const e = Math.max(drag.startMin, drag.currentMin) - 360 + 30;
+    const top = (s / 60) * SLOT_H;
+    const height = Math.max(((e - s) / 60) * SLOT_H, SLOT_H / 2);
+    return <div className="absolute left-1 right-1 rounded-lg bg-blue-200 opacity-50 border-2 border-blue-400 z-10 pointer-events-none" style={{ top, height }} />;
+  };
+
+  const renderCol = (date, colName, colItems) => {
+    const laid = layoutEvents(colItems, timeToMin);
+    return (
+      <div className="flex-1 min-w-[120px] relative border-r border-gray-100" style={{ height: HOURS.length * SLOT_H }}
+        onMouseDown={e => { const rect = e.currentTarget.getBoundingClientRect(); handleGridMouseDown(date, colName, { ...e, currentTarget: e.currentTarget, clientY: e.clientY, target: e.target, button: e.button, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation() }); }}>
+        {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - 6) * SLOT_H }} />)}
+        {HOURS.map(h => <div key={h + "half"} className="absolute w-full border-t border-gray-50" style={{ top: (h - 6) * SLOT_H + SLOT_H / 2 }} />)}
+        {renderDragPreview(date, colName)}
+        {laid.map(item => renderEvent(item, viewMode === "week", item._col, item._total))}
+      </div>
+    );
+  };
+
   const renderTimeGutter = () => (
     <div className="shrink-0 w-14 border-r border-gray-200 relative bg-white" style={{ height: HOURS.length * SLOT_H }}>
       {HOURS.map(h => (
@@ -591,41 +672,15 @@ function ItineraryTab({ setup, items = [], setItems }) {
     </div>
   );
 
-  // Render column
-  const renderCol = (date, colName, colItems) => (
-    <div className="flex-1 min-w-[120px] relative border-r border-gray-100" style={{ height: HOURS.length * SLOT_H }}
-      onMouseDown={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const slot = Math.floor((e.clientY - rect.top) / (SLOT_H / 2)); handleMouseDown(date, colName, slot, e); }}>
-      {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - 6) * SLOT_H }} />)}
-      {HOURS.map(h => <div key={h + "half"} className="absolute w-full border-t border-gray-50" style={{ top: (h - 6) * SLOT_H + SLOT_H / 2 }} />)}
-      {renderDragPreview(date, colName)}
-      {colItems.map(item => renderEvent(item, viewMode === "week"))}
-    </div>
-  );
-
-  // Compute view data
+  // Compute data
   const weekFiltered = viewPerson === "__all__" ? items : (items || []).filter(r => r.assignedTo?.includes(viewPerson));
-  const dayItems = (items || []).filter(r => r.date === viewDay);
-
-  // Modal data
+  const visiblePeople = dayPeople.length > 0 ? dayPeople : names;
+  const dayAllItems = (items || []).filter(r => r.date === viewDay);
   const modalItem = modal ? (items || []).find(r => r.id === modal.id) || modal.snapshot : null;
-
-  // Column headers for week view
-  const weekHeaders = dates.map(d => (
-    <div key={isoD(d)} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
-      <div className="text-xs font-semibold text-gray-700">{fmtD(d)}</div>
-    </div>
-  ));
-
-  // Column headers for day view
-  const dayHeaders = names.map(n => (
-    <div key={n} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
-      <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
-      <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
-    </div>
-  ));
 
   return (
     <div className="space-y-3">
+      {/* Controls */}
       <Card className="p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex gap-1.5">
@@ -638,35 +693,49 @@ function ItineraryTab({ setup, items = [], setItems }) {
               <button onClick={() => setViewPerson("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
               {names.map(n => <button key={n} onClick={() => setViewPerson(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === n ? "text-white" : "bg-gray-100 text-gray-500"}`} style={viewPerson === n ? { background: getColor(n) } : {}}>{n}</button>)}
             </div>
-          ) : (
+          ) : (<>
             <div className="flex gap-1.5 flex-wrap">
               {dates.map(d => {
                 const ds = isoD(d);
                 return <button key={ds} onClick={() => setViewDay(ds)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewDay === ds ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>{fmtD(d)}</button>;
               })}
             </div>
-          )}
+            <div className="h-5 w-px bg-gray-200" />
+            <div className="flex gap-1.5 flex-wrap">
+              <button onClick={() => setDayPeople([])} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${dayPeople.length === 0 ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>All</button>
+              {names.map(n => <button key={n} onClick={() => togDayPerson(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${dayPeople.includes(n) ? "text-white" : "bg-gray-100 text-gray-500"}`} style={dayPeople.includes(n) ? { background: getColor(n) } : {}}>{n}</button>)}
+            </div>
+          </>)}
         </div>
       </Card>
 
-      <Card className="overflow-hidden" style={{ position: "relative", zIndex: 0 }}>
-        {/* Scrollable grid with sticky header inside */}
-        <div className="overflow-auto" ref={gridRef} style={{ maxHeight: "calc(100vh - 280px)", userSelect: drag ? "none" : "auto" }}>
-          <div style={{ minWidth: viewMode === "week" ? dates.length * 120 + 56 : names.length * 120 + 56 }}>
-            {/* Sticky header row */}
-            <div className="flex border-b border-gray-200 bg-white sticky top-0 z-30">
+      {/* Calendar */}
+      <Card className="overflow-hidden">
+        <div ref={scrollRef} className="overflow-auto" style={{ maxHeight: "calc(100vh - 300px)", userSelect: drag ? "none" : "auto" }}>
+          <div style={{ minWidth: (viewMode === "week" ? dates.length : visiblePeople.length) * 120 + 56 }}>
+            {/* Sticky header */}
+            <div className="flex border-b border-gray-200 bg-white sticky top-0" style={{ zIndex: 5 }}>
               <div className="shrink-0 w-14 border-r border-gray-200" />
-              {viewMode === "week" ? weekHeaders : dayHeaders}
+              {viewMode === "week" ? dates.map(d => (
+                <div key={isoD(d)} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
+                  <div className="text-xs font-semibold text-gray-700">{fmtD(d)}</div>
+                </div>
+              )) : visiblePeople.map(n => (
+                <div key={n} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
+                  <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
+                  <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
+                </div>
+              ))}
             </div>
             {/* Grid body */}
-            <div className="flex">
+            <div className="flex" data-gridbody="true">
               {renderTimeGutter()}
               {viewMode === "week" ? dates.map(d => {
                 const ds = isoD(d);
                 const colItems = (weekFiltered || []).filter(r => r.date === ds);
                 return <div key={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
-              }) : names.map(n => {
-                const personItems = dayItems.filter(r => r.assignedTo?.includes(n));
+              }) : visiblePeople.map(n => {
+                const personItems = dayAllItems.filter(r => r.assignedTo?.includes(n));
                 return <div key={n} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
               })}
             </div>
@@ -675,10 +744,10 @@ function ItineraryTab({ setup, items = [], setItems }) {
       </Card>
 
       <div className="text-center">
-        <span className="text-xs text-gray-400">Click or drag on the calendar to create events</span>
+        <span className="text-xs text-gray-400">Click to create · Drag edges to resize · Drag body to move</span>
       </div>
 
-      {/* Event Modal — inline, not a sub-component */}
+      {/* Event Modal */}
       {modal && modalItem && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
@@ -688,21 +757,10 @@ function ItineraryTab({ setup, items = [], setItems }) {
             </div>
             <Inp value={modalItem.activity || ""} onChange={e => upd(modal.id, "activity", e.target.value)} placeholder="Event name..." className="w-full text-base font-semibold" autoFocus />
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Start</label>
-                <Inp type="time" value={modalItem.time || ""} onChange={e => upd(modal.id, "time", e.target.value)} className="w-full" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">End</label>
-                <Inp type="time" value={modalItem.endTime || ""} onChange={e => upd(modal.id, "endTime", e.target.value)} className="w-full" />
-              </div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Start</label><Inp type="time" value={modalItem.time || ""} onChange={e => upd(modal.id, "time", e.target.value)} className="w-full" /></div>
+              <div><label className="text-xs text-gray-400 mb-1 block">End</label><Inp type="time" value={modalItem.endTime || ""} onChange={e => upd(modal.id, "endTime", e.target.value)} className="w-full" /></div>
             </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Date</label>
-              <Sel value={modalItem.date || ""} onChange={e => upd(modal.id, "date", e.target.value)} className="w-full">
-                {dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}
-              </Sel>
-            </div>
+            <div><label className="text-xs text-gray-400 mb-1 block">Date</label><Sel value={modalItem.date || ""} onChange={e => upd(modal.id, "date", e.target.value)} className="w-full">{dates.map(d => <option key={isoD(d)} value={isoD(d)}>{fmtD(d)}</option>)}</Sel></div>
             <div>
               <label className="text-xs text-gray-400 mb-1 block">📍 Location</label>
               <Inp value={modalItem.location || ""} onChange={e => upd(modal.id, "location", e.target.value)} placeholder="Place name" className="w-full" />
@@ -715,9 +773,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
                 {names.map(n => (
                   <button key={n} onClick={() => togA(modal.id, n)}
                     className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${modalItem.assignedTo?.includes(n) ? "text-white" : "bg-gray-100 text-gray-400"}`}
-                    style={modalItem.assignedTo?.includes(n) ? { background: getColor(n) } : {}}>
-                    {n}
-                  </button>
+                    style={modalItem.assignedTo?.includes(n) ? { background: getColor(n) } : {}}>{n}</button>
                 ))}
               </div>
             </div>
