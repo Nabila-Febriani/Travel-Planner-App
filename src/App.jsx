@@ -554,8 +554,19 @@ function ItineraryTab({ setup, items = [], setItems }) {
     e.stopPropagation();
     const startMin = timeToMin(item.time);
     const endMin = timeToMin(item.endTime || minToTime(startMin + 60));
-    setDrag({ type, id: item.id, origStart: startMin, origEnd: endMin, anchorY: e.clientY, startMin, endMin });
+    setDrag({ type, id: item.id, origDate: item.date, origStart: startMin, origEnd: endMin, anchorX: e.clientX, anchorY: e.clientY, startMin, endMin });
   };
+
+  // Detect which column (date) the mouse is over
+  const getDateFromX = useCallback((clientX) => {
+    if (!scrollRef.current) return null;
+    const cols = scrollRef.current.querySelectorAll("[data-coldate]");
+    for (const col of cols) {
+      const rect = col.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right) return col.getAttribute("data-coldate");
+    }
+    return null;
+  }, []);
 
   const handleMouseMove = useCallback((e) => {
     if (!drag) return;
@@ -572,8 +583,9 @@ function ItineraryTab({ setup, items = [], setItems }) {
       if (drag.type === "move") {
         const newStart = Math.max(360, Math.min(drag.origStart + deltaMin, 1410 - (drag.origEnd - drag.origStart)));
         const newEnd = newStart + (drag.origEnd - drag.origStart);
+        const newDate = getDateFromX(e.clientX) || drag.origDate;
         setDrag(prev => prev ? { ...prev, startMin: newStart, endMin: newEnd } : null);
-        updMulti(drag.id, { time: minToTime(newStart), endTime: minToTime(newEnd) });
+        updMulti(drag.id, { time: minToTime(newStart), endTime: minToTime(newEnd), date: newDate });
       } else if (drag.type === "resize-bottom") {
         const newEnd = Math.max(drag.origStart + 30, Math.min(drag.origEnd + deltaMin, 1440));
         setDrag(prev => prev ? { ...prev, endMin: newEnd } : null);
@@ -584,7 +596,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
         upd(drag.id, "time", minToTime(newStart));
       }
     }
-  }, [drag]);
+  }, [drag, getDateFromX]);
 
   const handleMouseUp = useCallback(() => {
     if (!drag) return;
@@ -684,8 +696,8 @@ function ItineraryTab({ setup, items = [], setItems }) {
       <Card className="p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex gap-1.5">
-            <button onClick={() => setViewMode("week")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "week" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>📅 Week</button>
-            <button onClick={() => setViewMode("day")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "day" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>👥 Day</button>
+            <button onClick={() => setViewMode("week")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "week" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>📅 Day</button>
+            <button onClick={() => setViewMode("day")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewMode === "day" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>👥 Person</button>
           </div>
           <div className="h-5 w-px bg-gray-200" />
           {viewMode === "week" ? (
@@ -714,7 +726,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
         <div ref={scrollRef} className="overflow-auto" style={{ maxHeight: "calc(100vh - 300px)", userSelect: drag ? "none" : "auto" }}>
           <div style={{ minWidth: (viewMode === "week" ? dates.length : visiblePeople.length) * 120 + 56 }}>
             {/* Sticky header */}
-            <div className="flex border-b border-gray-200 bg-white sticky top-0" style={{ zIndex: 5 }}>
+            <div className="flex border-b border-gray-200 bg-white sticky top-0" style={{ zIndex: 25 }}>
               <div className="shrink-0 w-14 border-r border-gray-200" />
               {viewMode === "week" ? dates.map(d => (
                 <div key={isoD(d)} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
@@ -728,15 +740,15 @@ function ItineraryTab({ setup, items = [], setItems }) {
               ))}
             </div>
             {/* Grid body */}
-            <div className="flex" data-gridbody="true">
+            <div className="flex relative" data-gridbody="true">
               {renderTimeGutter()}
               {viewMode === "week" ? dates.map(d => {
                 const ds = isoD(d);
                 const colItems = (weekFiltered || []).filter(r => r.date === ds);
-                return <div key={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
+                return <div key={ds} data-coldate={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
               }) : visiblePeople.map(n => {
                 const personItems = dayAllItems.filter(r => r.assignedTo?.includes(n));
-                return <div key={n} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
+                return <div key={n} data-coldate={viewDay} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
               })}
             </div>
           </div>
