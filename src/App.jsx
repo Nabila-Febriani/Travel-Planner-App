@@ -467,7 +467,7 @@ function SetupTab({ setup, setSetup }) {
 }
 
 // ============ ITINERARY (Calendar View) ============
-const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 06:00 – 23:00
+const HOURS = Array.from({ length: 24 }, (_, i) => i); // 00:00 – 23:00
 const SLOT_H = 48; // px per hour
 const MEMBER_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#eab308", "#ef4444", "#06b6d4", "#84cc16", "#f43f5e"];
 
@@ -508,7 +508,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const dates = getDates(setup?.startDate, setup?.endDate);
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const [viewMode, setViewMode] = useState("week");
-  const [viewPerson, setViewPerson] = useState("__all__");
+  const [viewPeople, setViewPeople] = useState([]); // empty = all
   const [viewDay, setViewDay] = useState(dates[0] ? isoD(dates[0]) : "");
   const [dayPeople, setDayPeople] = useState([]); // selected people in day view (empty = all)
   const [modal, setModal] = useState(null);
@@ -535,9 +535,10 @@ function ItineraryTab({ setup, items = [], setItems }) {
 
   // Toggle person in day view filter
   const togDayPerson = (n) => setDayPeople(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
+  const togWeekPerson = (n) => setViewPeople(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
 
   // Y position to minutes (relative to scroll container's grid body)
-  const yToMin = (y) => snapTo30(Math.max(360, Math.min((y / SLOT_H) * 60 + 360, 1410)));
+  const yToMin = (y) => snapTo30(Math.max(0, Math.min((y / SLOT_H) * 60, 1410)));
 
   // --- DRAG SYSTEM ---
   const handleGridMouseDown = (date, col, e) => {
@@ -581,7 +582,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
       const dy = e.clientY - drag.anchorY;
       const deltaMin = snapTo30(Math.round((dy / SLOT_H) * 60));
       if (drag.type === "move") {
-        const newStart = Math.max(360, Math.min(drag.origStart + deltaMin, 1410 - (drag.origEnd - drag.origStart)));
+        const newStart = Math.max(0, Math.min(drag.origStart + deltaMin, 1410 - (drag.origEnd - drag.origStart)));
         const newEnd = newStart + (drag.origEnd - drag.origStart);
         const newDate = getDateFromX(e.clientX) || drag.origDate;
         setDrag(prev => prev ? { ...prev, startMin: newStart, endMin: newEnd } : null);
@@ -591,7 +592,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
         setDrag(prev => prev ? { ...prev, endMin: newEnd } : null);
         upd(drag.id, "endTime", minToTime(newEnd));
       } else if (drag.type === "resize-top") {
-        const newStart = Math.max(360, Math.min(drag.origStart + deltaMin, drag.origEnd - 30));
+        const newStart = Math.max(0, Math.min(drag.origStart + deltaMin, drag.origEnd - 30));
         setDrag(prev => prev ? { ...prev, startMin: newStart } : null);
         upd(drag.id, "time", minToTime(newStart));
       }
@@ -620,8 +621,8 @@ function ItineraryTab({ setup, items = [], setItems }) {
 
   // --- POSITION & RENDERING ---
   const getPos = (item) => {
-    const start = timeToMin(item.time) - 360;
-    const end = timeToMin(item.endTime || minToTime(timeToMin(item.time) + 60)) - 360;
+    const start = timeToMin(item.time);
+    const end = timeToMin(item.endTime || minToTime(start + 60));
     return { top: (start / 60) * SLOT_H, height: Math.max(((end - start) / 60) * SLOT_H, 12) };
   };
 
@@ -666,8 +667,8 @@ function ItineraryTab({ setup, items = [], setItems }) {
     return (
       <div className="flex-1 min-w-[120px] relative border-r border-gray-100" style={{ height: HOURS.length * SLOT_H }}
         onMouseDown={e => { const rect = e.currentTarget.getBoundingClientRect(); handleGridMouseDown(date, colName, { ...e, currentTarget: e.currentTarget, clientY: e.clientY, target: e.target, button: e.button, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation() }); }}>
-        {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - 6) * SLOT_H }} />)}
-        {HOURS.map(h => <div key={h + "half"} className="absolute w-full border-t border-gray-50" style={{ top: (h - 6) * SLOT_H + SLOT_H / 2 }} />)}
+        {HOURS.map(h => <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: h * SLOT_H }} />)}
+        {HOURS.map(h => <div key={h + "half"} className="absolute w-full border-t border-gray-50" style={{ top: h * SLOT_H + SLOT_H / 2 }} />)}
         {renderDragPreview(date, colName)}
         {laid.map(item => renderEvent(item, viewMode === "week", item._col, item._total))}
       </div>
@@ -677,7 +678,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
   const renderTimeGutter = () => (
     <div className="shrink-0 w-14 border-r border-gray-200 relative bg-white" style={{ height: HOURS.length * SLOT_H }}>
       {HOURS.map(h => (
-        <div key={h} className="absolute w-full text-right pr-2 text-xs text-gray-400 -translate-y-1/2" style={{ top: (h - 6) * SLOT_H }}>
+        <div key={h} className="absolute w-full text-right pr-2 text-xs text-gray-400 -translate-y-1/2" style={{ top: h * SLOT_H }}>
           {String(h).padStart(2, "0")}:00
         </div>
       ))}
@@ -685,7 +686,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
   );
 
   // Compute data
-  const weekFiltered = viewPerson === "__all__" ? items : (items || []).filter(r => r.assignedTo?.includes(viewPerson));
+  const weekFiltered = viewPeople.length === 0 ? items : (items || []).filter(r => viewPeople.some(p => r.assignedTo?.includes(p)));
   const visiblePeople = dayPeople.length > 0 ? dayPeople : names;
   const dayAllItems = (items || []).filter(r => r.date === viewDay);
   const modalItem = modal ? (items || []).find(r => r.id === modal.id) || modal.snapshot : null;
@@ -702,8 +703,8 @@ function ItineraryTab({ setup, items = [], setItems }) {
           <div className="h-5 w-px bg-gray-200" />
           {viewMode === "week" ? (
             <div className="flex gap-1.5 flex-wrap">
-              <button onClick={() => setViewPerson("__all__")} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === "__all__" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
-              {names.map(n => <button key={n} onClick={() => setViewPerson(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPerson === n ? "text-white" : "bg-gray-100 text-gray-500"}`} style={viewPerson === n ? { background: getColor(n) } : {}}>{n}</button>)}
+              <button onClick={() => setViewPeople([])} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPeople.length === 0 ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500"}`}>Everyone</button>
+              {names.map(n => <button key={n} onClick={() => togWeekPerson(n)} className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${viewPeople.includes(n) ? "text-white" : "bg-gray-100 text-gray-500"}`} style={viewPeople.includes(n) ? { background: getColor(n) } : {}}>{n}</button>)}
             </div>
           ) : (<>
             <div className="flex gap-1.5 flex-wrap">
@@ -745,7 +746,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
               {viewMode === "week" ? dates.map(d => {
                 const ds = isoD(d);
                 const colItems = (weekFiltered || []).filter(r => r.date === ds);
-                return <div key={ds} data-coldate={ds} className="flex-1 min-w-[120px]">{renderCol(ds, viewPerson, colItems)}</div>;
+                return <div key={ds} data-coldate={ds} className="flex-1 min-w-[120px]">{renderCol(ds, "__week__", colItems)}</div>;
               }) : visiblePeople.map(n => {
                 const personItems = dayAllItems.filter(r => r.assignedTo?.includes(n));
                 return <div key={n} data-coldate={viewDay} className="flex-1 min-w-[120px]">{renderCol(viewDay, n, personItems)}</div>;
