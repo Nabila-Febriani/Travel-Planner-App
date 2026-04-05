@@ -299,7 +299,7 @@ function TripView({ code, onBack }) {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className="bg-white border-b sticky top-0 z-20">
+      <div className="bg-white border-b sticky top-0 z-30">
         <div className="max-w-3xl mx-auto px-4 py-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -326,7 +326,7 @@ function TripView({ code, onBack }) {
         </div>
       </div>
 
-      <div className="sticky top-[106px] z-10 bg-gray-50 pt-3 pb-2">
+      <div className="sticky top-[106px] z-30 bg-gray-50 pt-3 pb-2">
         <div className="max-w-3xl mx-auto px-4 flex gap-2 overflow-x-auto pb-1">
           {TRIP_TABS.map(t => <Pill key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>{t.icon} {t.label}</Pill>)}
         </div>
