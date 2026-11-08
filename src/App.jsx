@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { saveTrip, getTrip, listenTrip } from "./firebase";
+import { saveTrip, getTrip, listenTrip, deleteTrip, listAllTrips } from "./firebase";
 
 // ============ UTILS ============
 const genId = () => Math.random().toString(36).slice(2, 8);
@@ -168,6 +168,13 @@ function Home({ onOpen }) {
   const [joinCode, setJoinCode] = useState("");
   const [joinErr, setJoinErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const [adminPanel, setAdminPanel] = useState(false);
+  const [adminTrips, setAdminTrips] = useState([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminUser, setAdminUser] = useState("");
+  const [adminPin, setAdminPin] = useState("");
+  const [adminAuthed, setAdminAuthed] = useState(false);
 
   const createTrip = async () => {
     const pin = prompt("Enter admin PIN to create a new trip:");
@@ -201,12 +208,105 @@ function Home({ onOpen }) {
     onOpen(c);
   };
 
-  const removeTrip = (code, e) => {
-    e.stopPropagation();
+  const removeFromList = (code) => {
     const nt = trips.filter(t => t.code !== code);
     saveMyTrips(nt);
     setTrips(nt);
+    setConfirmRemove(null);
   };
+
+  const deleteFromDB = async (code) => {
+    const pin = prompt("Enter admin PIN to permanently delete this trip:");
+    if (pin !== "5552") { alert("Wrong PIN!"); return; }
+    setBusy(true);
+    await deleteTrip(code);
+    const nt = trips.filter(t => t.code !== code);
+    saveMyTrips(nt);
+    setTrips(nt);
+    setConfirmRemove(null);
+    setAdminTrips(at => at.filter(t => t.code !== code));
+    setBusy(false);
+  };
+
+  const openAdmin = () => {
+    setAdminPanel(true);
+    setAdminAuthed(false);
+    setAdminUser("");
+    setAdminPin("");
+  };
+
+  const loginAdmin = async () => {
+    if (adminUser.toLowerCase() !== "nabila" || adminPin !== "5552") {
+      alert("Wrong credentials!");
+      return;
+    }
+    setAdminAuthed(true);
+    setAdminLoading(true);
+    const all = await listAllTrips();
+    setAdminTrips(all);
+    setAdminLoading(false);
+  };
+
+  const adminDelete = async (code) => {
+    if (!confirm(`Permanently delete trip ${code}? This cannot be undone.`)) return;
+    setBusy(true);
+    await deleteTrip(code);
+    setAdminTrips(at => at.filter(t => t.code !== code));
+    const nt = trips.filter(t => t.code !== code);
+    saveMyTrips(nt);
+    setTrips(nt);
+    setBusy(false);
+  };
+
+  if (adminPanel) return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-2xl mx-auto px-4 py-10">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setAdminPanel(false)} className="text-gray-400 hover:text-gray-700 text-sm">← Back</button>
+          <h1 className="text-lg font-bold text-gray-900">🔐 Admin Panel</h1>
+        </div>
+        {!adminAuthed ? (
+          <Card className="p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-gray-700">Login</h3>
+            <Inp value={adminUser} onChange={e => setAdminUser(e.target.value)} placeholder="Username" className="w-full" />
+            <Inp type="password" value={adminPin} onChange={e => setAdminPin(e.target.value)} placeholder="PIN" className="w-full" onKeyDown={e => e.key === "Enter" && loginAdmin()} />
+            <BtnDark onClick={loginAdmin}>Login</BtnDark>
+          </Card>
+        ) : adminLoading ? (
+          <div className="text-center py-10"><div className="text-4xl animate-bounce">🔍</div><p className="text-sm text-gray-400 mt-2">Loading all trips...</p></div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-sm font-semibold text-gray-700">All Trips in Database ({adminTrips.length})</h2>
+              <button onClick={async () => { setAdminLoading(true); setAdminTrips(await listAllTrips()); setAdminLoading(false); }} className="text-xs text-gray-400 hover:text-gray-700">Refresh</button>
+            </div>
+            {adminTrips.length === 0 ? (
+              <Card className="p-6 text-center"><p className="text-sm text-gray-400">No trips in database</p></Card>
+            ) : adminTrips.map(t => (
+              <Card key={t.code} className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-gray-800 text-sm">{t.name}</span>
+                      <span className="text-xs font-mono bg-gray-100 text-gray-500 px-2 py-0.5 rounded">{t.code}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1">
+                      {t.startDate && <span className="text-xs text-gray-400">{fmtD(t.startDate)} — {fmtD(t.endDate)}</span>}
+                      {t.members.length > 0 && <span className="text-xs text-gray-400">👥 {t.members.join(", ")}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onOpen(t.code)} className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-full hover:bg-gray-200">Open</button>
+                    <button onClick={() => adminDelete(t.code)} disabled={busy} className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-full hover:bg-red-200">Delete</button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -228,7 +328,10 @@ function Home({ onOpen }) {
 
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-sm font-semibold text-gray-700">My Trips ({trips.length})</h2>
-          <BtnDark onClick={createTrip} disabled={busy}>{busy ? "Creating..." : "+ New Trip"}</BtnDark>
+          <div className="flex gap-2">
+            <button onClick={openAdmin} className="text-xs text-gray-300 hover:text-gray-500 px-2 py-1">🔐</button>
+            <BtnDark onClick={createTrip} disabled={busy}>{busy ? "Creating..." : "+ New Trip"}</BtnDark>
+          </div>
         </div>
 
         {trips.length === 0 ? (
@@ -253,10 +356,18 @@ function Home({ onOpen }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={(e) => removeTrip(t.code, e)} className="text-gray-300 hover:text-red-400 text-sm p-1">×</button>
+                    <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(t.code); }} className="text-gray-300 hover:text-red-400 text-sm p-1">×</button>
                     <span className="text-gray-300">›</span>
                   </div>
                 </div>
+                {confirmRemove === t.code && (
+                  <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                    <span className="text-xs text-gray-500 flex-1">Remove this trip?</span>
+                    <button onClick={() => removeFromList(t.code)} className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-full hover:bg-gray-200">Remove from list</button>
+                    <button onClick={() => deleteFromDB(t.code)} className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-full hover:bg-red-200">Delete from database</button>
+                    <button onClick={() => setConfirmRemove(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                  </div>
+                )}
               </Card>
             ))}
           </div>
