@@ -119,7 +119,7 @@ async function doExport(setup, itinerary, expenses) {
   ]), "Itinerary");
 
   const er = [["EXPENSES"], [], ["Date", "Desc", "Category", "Amount", "Paid By", ...names.map(n => n + " share")]];
-  (expenses || []).forEach(e => er.push([e.date, e.description, e.category, e.amount, e.paidBy === "__each__" ? "Masing-masing" : e.paidBy,
+  (expenses || []).forEach(e => er.push([e.date, e.description, e.category, e.amount, e.paidBy === "__each__" ? "Each (self-paid)" : e.paidBy,
     ...names.map(n => e.splitAmong?.includes(n) && e.splitAmong.length > 0 ? Math.round(e.amount / e.splitAmong.length) : 0)]));
   er.push(["", "", "TOTAL", (expenses || []).reduce((s, e) => s + (e.amount || 0), 0)]);
   X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(er), "Expenses");
@@ -863,12 +863,12 @@ function ExpensesTab({ setup, expenses = [], setExpenses }) {
           </div>
           <div className="flex gap-2 items-center flex-wrap">
             <span className="text-xs text-gray-400">Paid by:</span>
-            <Sel value={ex.paidBy || ""} onChange={e => upd(ex.id, "paidBy", e.target.value)} className="w-36"><option value="">—</option>{names.map(n => <option key={n}>{n}</option>)}<option value="__each__">Masing-masing</option></Sel>
+            <Sel value={ex.paidBy || ""} onChange={e => upd(ex.id, "paidBy", e.target.value)} className="w-36"><option value="">—</option>{names.map(n => <option key={n}>{n}</option>)}<option value="__each__">Each (self-paid)</option></Sel>
             <span className="text-xs text-gray-400 ml-2">Split:</span>
             {names.map(n => <button key={n} onClick={() => togS(ex.id, n)} className={`px-2 py-0.5 rounded-full text-xs font-medium transition-all ${ex.splitAmong?.includes(n) ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-gray-50 text-gray-300 border border-gray-200"}`}>{n}</button>)}
             <button onClick={() => setExpenses(p => (p || []).map(e => e.id === ex.id ? { ...e, splitAmong: [...names] } : e))} className="text-xs text-gray-400 hover:text-gray-600 underline ml-1">All</button>
           </div>
-          {ex.amount > 0 && ex.splitAmong?.length > 0 && <div className="text-xs text-gray-400">{fmt(Math.round(ex.amount / ex.splitAmong.length))} / person{ex.paidBy === "__each__" && " (bayar sendiri)"}</div>}
+          {ex.amount > 0 && ex.splitAmong?.length > 0 && <div className="text-xs text-gray-400">{fmt(Math.round(ex.amount / ex.splitAmong.length))} / person{ex.paidBy === "__each__" && " (self-paid)"}</div>}
         </Card>
       ))}
     </div>
