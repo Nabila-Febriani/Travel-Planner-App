@@ -48,19 +48,26 @@ export async function deleteTrip(code) {
   }
 }
 
-// List all trips in database
+// List all trips in database (uses REST shallow query for compatibility with restrictive rules)
 export async function listAllTrips() {
   try {
-    const snap = await get(ref(db, 'trips'));
-    if (!snap.exists()) return [];
-    const data = snap.val();
-    return Object.entries(data).map(([code, trip]) => ({
-      code,
-      name: trip.setup?.tripName || "Untitled",
-      startDate: trip.setup?.startDate || "",
-      endDate: trip.setup?.endDate || "",
-      members: (trip.setup?.members || []).map(m => m.name).filter(Boolean),
+    const baseUrl = firebaseConfig.databaseURL.replace(/\/$/, "");
+    const res = await fetch(`${baseUrl}/trips.json?shallow=true`);
+    const keys = await res.json();
+    if (!keys || typeof keys !== "object") return [];
+    const codes = Object.keys(keys);
+    const trips = await Promise.all(codes.map(async (code) => {
+      const trip = await getTrip(code);
+      if (!trip) return null;
+      return {
+        code,
+        name: trip.setup?.tripName || "Untitled",
+        startDate: trip.setup?.startDate || "",
+        endDate: trip.setup?.endDate || "",
+        members: (trip.setup?.members || []).map(m => m.name).filter(Boolean),
+      };
     }));
+    return trips.filter(Boolean);
   } catch (e) {
     console.error('Failed to list trips:', e);
     return [];
