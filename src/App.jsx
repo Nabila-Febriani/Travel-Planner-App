@@ -62,6 +62,20 @@ const NumInp = ({ value, onChange, className = "", ...p }) => {
 };
 const BtnDark = ({ children, className = "", ...p }) => <button {...p} className={`text-sm font-medium px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50 ${className}`}>{children}</button>;
 
+const AVATAR_COLORS = ["#1e293b", "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#eab308", "#ef4444", "#06b6d4", "#84cc16", "#f43f5e", "#6366f1"];
+const AVATAR_EMOJIS = ["😀","😎","🤩","🥳","😇","🤗","🐱","🐶","🐰","🦊","🐻","🐼","🦁","🐸","🐵","🦄","🌸","🌻","🌈","⭐","🔥","💎","🎀","🧸","🎯","🚀","🎵","🍕","🌮","🍦","☕","🧋"];
+const AvatarDisplay = ({ member, size = "w-8 h-8", textSize = "text-xs" }) => {
+  const bg = member?.color || "#1e293b";
+  const emoji = member?.emoji;
+  return (
+    <div className={`${size} rounded-full flex items-center justify-center shrink-0 relative overflow-hidden`} style={{ background: bg }}>
+      {emoji ? <span className={textSize}>{emoji}</span> : <span className={`${textSize} font-bold text-white`}>{(member?.name || "?")[0].toUpperCase()}</span>}
+    </div>
+  );
+};
+
+const getMember = (setup, name) => (setup?.members || []).find(m => m.name === name) || { name };
+
 // ============ DEBT CALC ============
 function calcDebts(names, expenses) {
   const bal = {}, tp = {};
@@ -472,6 +486,7 @@ function SetupTab({ setup, setSetup }) {
   const addM = () => setSetup(p => ({ ...p, members: [...(p.members || []), { id: genId(), name: "", budget: 2000000 }] }));
   const rmM = (i) => setSetup(p => ({ ...p, members: (p.members || []).filter((_, idx) => idx !== i) }));
   const applyB = (v) => setSetup(p => ({ ...p, members: (p.members || []).map(m => ({ ...m, budget: Number(v) || 0 })) }));
+  const [pickerOpen, setPickerOpen] = useState(null);
 
   return (
     <div className="space-y-5">
@@ -489,7 +504,27 @@ function SetupTab({ setup, setSetup }) {
         <div className="space-y-2">{(setup?.members || []).map((m, i) => (
           <div key={m.id || i} className="bg-gray-50 p-2 rounded-xl space-y-1.5">
             <div className="flex gap-2 items-center">
-              <div className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">{(m.name || "?")[0].toUpperCase()}</div>
+              <div className="relative">
+                <button onClick={() => setPickerOpen(pickerOpen === i ? null : i)} className="focus:outline-none hover:scale-110 transition-transform">
+                  <AvatarDisplay member={m} />
+                </button>
+                {pickerOpen === i && (
+                  <div className="absolute top-10 left-0 z-50 bg-white rounded-xl shadow-lg border border-gray-200 p-3 w-64" onClick={e => e.stopPropagation()}>
+                    <div className="text-xs font-semibold text-gray-500 mb-2">Color</div>
+                    <div className="flex flex-wrap gap-1.5 mb-3">{AVATAR_COLORS.map(c => (
+                      <button key={c} onClick={() => uM(i, "color", c)} className={`w-6 h-6 rounded-full transition-all ${m.color === c ? "ring-2 ring-offset-1 ring-gray-400 scale-110" : "hover:scale-110"}`} style={{ background: c }} />
+                    ))}</div>
+                    <div className="text-xs font-semibold text-gray-500 mb-2">Emoji</div>
+                    <div className="flex flex-wrap gap-1">{AVATAR_EMOJIS.map(e => (
+                      <button key={e} onClick={() => { uM(i, "emoji", e); }} className={`w-7 h-7 rounded-lg text-base flex items-center justify-center transition-all ${m.emoji === e ? "bg-gray-200 ring-2 ring-gray-400 scale-110" : "hover:bg-gray-100 hover:scale-110"}`}>{e}</button>
+                    ))}</div>
+                    <div className="flex justify-between mt-2 pt-2 border-t border-gray-100">
+                      {m.emoji && <button onClick={() => uM(i, "emoji", "")} className="text-xs text-gray-400 hover:text-red-500">Remove emoji</button>}
+                      <button onClick={() => setPickerOpen(null)} className="text-xs text-gray-500 hover:text-gray-700 ml-auto">Done</button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <Inp value={m.name || ""} onChange={e => uM(i, "name", e.target.value)} placeholder="Name" className="flex-1" />
               <NumInp value={m.budget} onChange={v => uM(i, "budget", v)} placeholder="Budget" className="w-32" />
               {(setup?.members || []).length > 1 && <button onClick={() => rmM(i)} className="text-gray-300 hover:text-red-500 text-lg">×</button>}
@@ -771,7 +806,7 @@ function ItineraryTab({ setup, items = [], setItems }) {
                 </div>
               )) : visiblePeople.map(n => (
                 <div key={n} className="flex-1 min-w-[120px] text-center py-2 px-1 border-r border-gray-100">
-                  <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold mx-auto mb-1" style={{ background: getColor(n) }}>{n[0]}</div>
+                  <div className="mx-auto mb-1"><AvatarDisplay member={getMember(setup, n)} size="w-7 h-7" textSize="text-xs" /></div>
                   <div className="text-xs font-medium text-gray-600 truncate">{n}</div>
                 </div>
               ))}
@@ -888,7 +923,7 @@ function DebtsTab({ setup, expenses = [], paidDebts = {}, setPaidDebts }) {
     <div className="space-y-5">
       <Card className="p-5"><h3 className="text-sm font-semibold text-gray-700 mb-4">💰 Balance</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{names.map(n => { const b = Math.round(bal[n] || 0); return (
         <div key={n} className={`rounded-xl p-3 border ${b > 0 ? "bg-emerald-50 border-emerald-200" : b < 0 ? "bg-red-50 border-red-200" : "bg-gray-50 border-gray-200"}`}>
-          <div className="flex items-center gap-2 mb-1"><div className="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold">{n[0]}</div><span className="text-sm font-medium">{n}</span></div>
+          <div className="flex items-center gap-2 mb-1"><AvatarDisplay member={getMember(setup, n)} size="w-6 h-6" textSize="text-xs" /><span className="text-sm font-medium">{n}</span></div>
           <div className={`text-lg font-bold ${b > 0 ? "text-emerald-600" : b < 0 ? "text-red-500" : "text-gray-400"}`}>{b > 0 ? "+" : ""}{fmt(b)}</div>
           <div className="text-xs text-gray-400 mt-0.5">Paid: {fmt(Math.round(totalPaid[n] || 0))}</div>
         </div>); })}</div></Card>
@@ -904,9 +939,9 @@ function DebtsTab({ setup, expenses = [], paidDebts = {}, setPaidDebts }) {
           return (
             <div key={i} className={`rounded-xl border transition-all ${paid ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-r from-red-50 via-white to-emerald-50 border-gray-100"}`}>
               <div className="flex items-center gap-3 p-4">
-                <div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${paid ? "bg-gray-200 text-gray-500" : "bg-red-100 text-red-700"}`}>{s.from[0]}</div><span className={`font-semibold text-sm ${paid ? "text-gray-400 line-through" : "text-red-700"}`}>{s.from}</span></div>
+                <div className="flex items-center gap-2"><AvatarDisplay member={paid ? { ...getMember(setup, s.from), color: "#d1d5db" } : getMember(setup, s.from)} /><span className={`font-semibold text-sm ${paid ? "text-gray-400 line-through" : "text-red-700"}`}>{s.from}</span></div>
                 <div className="flex-1 flex items-center gap-2"><div className="flex-1 border-t-2 border-dashed border-gray-200" /><div className={`px-3 py-1 rounded-full text-sm font-bold ${paid ? "bg-emerald-500 text-white" : "bg-gray-900 text-white"}`}>{paid ? "✓ Paid" : fmt(s.amt)}</div><div className="flex-1 border-t-2 border-dashed border-gray-200" /><span className="text-gray-400">→</span></div>
-                <div className="flex items-center gap-2"><span className={`font-semibold text-sm ${paid ? "text-gray-400 line-through" : "text-emerald-700"}`}>{s.to}</span><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${paid ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700"}`}>{s.to[0]}</div></div>
+                <div className="flex items-center gap-2"><span className={`font-semibold text-sm ${paid ? "text-gray-400 line-through" : "text-emerald-700"}`}>{s.to}</span><AvatarDisplay member={paid ? { ...getMember(setup, s.to), color: "#d1d5db" } : getMember(setup, s.to)} /></div>
                 <button onClick={() => togglePaid(key)} className={`shrink-0 ml-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${paid ? "bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600" : "bg-gray-100 text-gray-500 hover:bg-emerald-100 hover:text-emerald-700"}`}>{paid ? "Undo" : "Mark Paid"}</button>
               </div>
               {payInfo && !paid && (
