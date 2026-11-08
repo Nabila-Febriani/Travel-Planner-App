@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, get, onValue, child } from 'firebase/database';
+import { getDatabase, ref, set, get, remove, onValue, child } from 'firebase/database';
 
 // ⚠️⚠️⚠️ GANTI DENGAN CONFIG KAMU DARI FIREBASE CONSOLE ⚠️⚠️⚠️
 const firebaseConfig = {
@@ -34,6 +34,36 @@ export async function getTrip(code) {
   } catch (e) {
     console.error('Failed to get trip:', e);
     return null;
+  }
+}
+
+// Delete trip from database
+export async function deleteTrip(code) {
+  try {
+    await remove(ref(db, 'trips/' + code));
+    return true;
+  } catch (e) {
+    console.error('Failed to delete trip:', e);
+    return false;
+  }
+}
+
+// List all trips in database
+export async function listAllTrips() {
+  try {
+    const snap = await get(ref(db, 'trips'));
+    if (!snap.exists()) return [];
+    const data = snap.val();
+    return Object.entries(data).map(([code, trip]) => ({
+      code,
+      name: trip.setup?.tripName || "Untitled",
+      startDate: trip.setup?.startDate || "",
+      endDate: trip.setup?.endDate || "",
+      members: (trip.setup?.members || []).map(m => m.name).filter(Boolean),
+    }));
+  } catch (e) {
+    console.error('Failed to list trips:', e);
+    return [];
   }
 }
 
