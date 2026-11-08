@@ -871,8 +871,21 @@ function ExpensesTab({ setup, expenses = [], setExpenses }) {
 function DebtsTab({ setup, expenses = [], paidDebts = {}, setPaidDebts }) {
   const names = (setup?.members || []).map(m => m.name).filter(Boolean);
   const { bal, totalPaid, settlements } = calcDebts(names, expenses);
-  const togglePaid = (key) => setPaidDebts(p => ({ ...(p || {}), [key]: !(p || {})[key] }));
-  const paidCount = settlements.filter((s, i) => paidDebts[`${s.from}-${s.to}`]).length;
+  const getEntry = (key) => {
+    const v = paidDebts[key];
+    if (!v) return { paid: false, note: "" };
+    if (typeof v === "boolean") return { paid: v, note: "" };
+    return v;
+  };
+  const togglePaid = (key) => setPaidDebts(p => {
+    const cur = getEntry(key);
+    return { ...(p || {}), [key]: cur.paid ? false : { paid: true, note: cur.note || "" } };
+  });
+  const setNote = (key, note) => setPaidDebts(p => {
+    const cur = getEntry(key);
+    return { ...(p || {}), [key]: { ...cur, paid: true, note } };
+  });
+  const paidCount = settlements.filter(s => getEntry(`${s.from}-${s.to}`).paid).length;
   return (
     <div className="space-y-5">
       <Card className="p-5"><h3 className="text-sm font-semibold text-gray-700 mb-4">💰 Balance</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{names.map(n => { const b = Math.round(bal[n] || 0); return (
@@ -888,13 +901,21 @@ function DebtsTab({ setup, expenses = [], paidDebts = {}, setPaidDebts }) {
         </div>
         {settlements.length === 0 ? <div className="text-center py-6"><div className="text-3xl mb-2">✅</div><p className="text-sm text-gray-400">Everyone settled!</p></div> : <div className="space-y-3">{settlements.map((s, i) => {
           const key = `${s.from}-${s.to}`;
-          const isPaid = !!paidDebts[key];
+          const entry = getEntry(key);
+          const isPaid = entry.paid;
           return (
-            <div key={i} className={`flex items-center gap-3 p-4 rounded-xl border transition-all ${isPaid ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-r from-red-50 via-white to-emerald-50 border-gray-100"}`}>
-              <div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-red-100 text-red-700"}`}>{s.from[0]}</div><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-red-700"}`}>{s.from}</span></div>
-              <div className="flex-1 flex items-center gap-2"><div className="flex-1 border-t-2 border-dashed border-gray-200" /><div className={`px-3 py-1 rounded-full text-sm font-bold ${isPaid ? "bg-emerald-500 text-white" : "bg-gray-900 text-white"}`}>{isPaid ? "✓ Paid" : fmt(s.amt)}</div><div className="flex-1 border-t-2 border-dashed border-gray-200" /><span className="text-gray-400">→</span></div>
-              <div className="flex items-center gap-2"><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-emerald-700"}`}>{s.to}</span><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700"}`}>{s.to[0]}</div></div>
-              <button onClick={() => togglePaid(key)} className={`shrink-0 ml-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isPaid ? "bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600" : "bg-gray-100 text-gray-500 hover:bg-emerald-100 hover:text-emerald-700"}`}>{isPaid ? "Undo" : "Mark Paid"}</button>
+            <div key={i} className={`rounded-xl border transition-all ${isPaid ? "bg-gray-50 border-gray-200 opacity-60" : "bg-gradient-to-r from-red-50 via-white to-emerald-50 border-gray-100"}`}>
+              <div className="flex items-center gap-3 p-4">
+                <div className="flex items-center gap-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-red-100 text-red-700"}`}>{s.from[0]}</div><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-red-700"}`}>{s.from}</span></div>
+                <div className="flex-1 flex items-center gap-2"><div className="flex-1 border-t-2 border-dashed border-gray-200" /><div className={`px-3 py-1 rounded-full text-sm font-bold ${isPaid ? "bg-emerald-500 text-white" : "bg-gray-900 text-white"}`}>{isPaid ? "✓ Paid" : fmt(s.amt)}</div><div className="flex-1 border-t-2 border-dashed border-gray-200" /><span className="text-gray-400">→</span></div>
+                <div className="flex items-center gap-2"><span className={`font-semibold text-sm ${isPaid ? "text-gray-400 line-through" : "text-emerald-700"}`}>{s.to}</span><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isPaid ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700"}`}>{s.to[0]}</div></div>
+                <button onClick={() => togglePaid(key)} className={`shrink-0 ml-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isPaid ? "bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600" : "bg-gray-100 text-gray-500 hover:bg-emerald-100 hover:text-emerald-700"}`}>{isPaid ? "Undo" : "Mark Paid"}</button>
+              </div>
+              {isPaid && (
+                <div className="px-4 pb-3 -mt-1">
+                  <input value={entry.note || ""} onChange={e => setNote(key, e.target.value)} placeholder="Payment info (e.g. BCA 1234567890, GoPay)" className="w-full text-xs bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                </div>
+              )}
             </div>);
         })}</div>}
       </Card>
