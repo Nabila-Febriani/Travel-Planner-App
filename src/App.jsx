@@ -282,7 +282,34 @@ function TripView({ code, onBack }) {
     });
   }, [save]);
 
-  const setSetup = (fn) => upd("setup", fn);
+  const setSetup = (fn) => {
+    setData(prev => {
+      if (!prev) return prev;
+      const oldSetup = prev.setup || {};
+      const newSetup = typeof fn === "function" ? fn(oldSetup) : fn;
+      const oldMembers = oldSetup.members || [];
+      const newMembers = newSetup.members || [];
+      const renames = {};
+      newMembers.forEach((m, i) => {
+        const old = oldMembers.find(o => o.id === m.id);
+        if (old && old.name && m.name && old.name !== m.name) renames[old.name] = m.name;
+      });
+      let n = { ...prev, setup: newSetup };
+      if (Object.keys(renames).length > 0) {
+        const r = (name) => renames[name] || name;
+        n.itinerary = (n.itinerary || []).map(it => ({ ...it, assignedTo: it.assignedTo?.map(r) }));
+        n.expenses = (n.expenses || []).map(ex => ({ ...ex, paidBy: r(ex.paidBy), splitAmong: ex.splitAmong?.map(r) }));
+        const newPaid = {};
+        Object.entries(n.paidDebts || {}).forEach(([k, v]) => {
+          const [from, to] = k.split("-");
+          newPaid[`${r(from)}-${r(to)}`] = v;
+        });
+        n.paidDebts = newPaid;
+      }
+      save(n);
+      return n;
+    });
+  };
   const setItinerary = (fn) => upd("itinerary", fn);
   const setExpenses = (fn) => upd("expenses", fn);
   const setPacking = (fn) => upd("packing", fn);
