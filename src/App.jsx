@@ -236,7 +236,7 @@ function Home({ onOpen }) {
   };
 
   const loginAdmin = async () => {
-    if (adminUser.toLowerCase() !== "nabila" || adminPin !== "5552") {
+    if (adminUser.toLowerCase() !== "lalariani" || adminPin !== "5552") {
       alert("Wrong credentials!");
       return;
     }
