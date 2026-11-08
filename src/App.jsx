@@ -497,7 +497,8 @@ function SetupTab({ setup, setSetup }) {
   const uM = (i, k, v) => setSetup(p => { const m = [...(p.members || [])]; m[i] = { ...m[i], [k]: v }; return { ...p, members: m }; });
   const addM = () => setSetup(p => ({ ...p, members: [...(p.members || []), { id: genId(), name: "", budget: 2000000 }] }));
   const rmM = (i) => setSetup(p => ({ ...p, members: (p.members || []).filter((_, idx) => idx !== i) }));
-  const applyB = (v) => setSetup(p => ({ ...p, members: (p.members || []).map(m => ({ ...m, budget: Number(v) || 0 })) }));
+  const [bulkBudget, setBulkBudget] = useState("");
+  const applyB = () => { if (bulkBudget) { setSetup(p => ({ ...p, members: (p.members || []).map(m => ({ ...m, budget: Number(bulkBudget) || 0 })) })); setBulkBudget(""); } };
   const [pickerOpen, setPickerOpen] = useState(null);
   const [emojiCat, setEmojiCat] = useState(Object.keys(EMOJI_CATS)[0]);
 
@@ -513,7 +514,7 @@ function SetupTab({ setup, setSetup }) {
       </Card>
       <Card className="p-5 space-y-4">
         <div className="flex justify-between items-center"><h3 className="text-sm font-semibold text-gray-700">👥 Members ({(setup?.members || []).length})</h3><BtnDark onClick={addM}>+ Add</BtnDark></div>
-        <div className="flex gap-2 items-center"><NumInp value="" placeholder="Set all budgets" className="flex-1" onChange={v => applyB(v)} /><span className="text-xs text-gray-400 shrink-0">Apply all</span></div>
+        <div className="flex gap-2 items-center"><NumInp value={bulkBudget} placeholder="Set all budgets" className="flex-1" onChange={v => setBulkBudget(v)} /><button onClick={applyB} className="text-xs text-gray-400 hover:text-gray-700 shrink-0">Apply all</button></div>
         <div className="space-y-2">{(setup?.members || []).map((m, i) => (
           <div key={m.id || i} className="bg-gray-50 p-2 rounded-xl space-y-1.5">
             <div className="flex gap-2 items-center">
