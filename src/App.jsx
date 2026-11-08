@@ -21,7 +21,7 @@ const fmtD = (d) => {
   if (typeof d === "string") d = new Date(d + "T00:00:00");
   return d.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short" });
 };
-const isoD = (d) => d.toISOString().slice(0, 10);
+const isoD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const TRIP_TABS = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
